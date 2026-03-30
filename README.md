@@ -1,2 +1,2 @@
-# icesugar-cpu
-32 bit custom RISC cpu project
+# icesugar-mpu
+32 bit custom RISC microcontroller project
