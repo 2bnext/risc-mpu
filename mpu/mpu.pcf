@@ -1,0 +1,7 @@
+set_io clk    35
+set_io led_b  39
+set_io led_r  40
+set_io led_g  41
+set_io uart_tx 4
+set_io uart_rx 6
+set_io btn_s2  18

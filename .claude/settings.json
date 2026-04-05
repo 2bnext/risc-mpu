@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 simulator/sim.py --trace --max-cycles=2000 ccompiler/test.bin)",
+      "Bash(python3 simulator/sim.py --trace --max-cycles=5000 ccompiler/test.bin)",
+      "Bash(python3 simulator/sim.py --max-cycles=20000000 ccompiler/test.bin)",
+      "Bash(python3 simulator/sim.py --trace --max-cycles=10000000 ccompiler/test.bin)",
+      "Bash(python3 ccompiler/cc.py ccompiler/test.c /tmp/test_printf.asm)",
+      "Bash(python3 assembler/asm.py /tmp/test_printf.asm /tmp/test_printf.bin)",
+      "Bash(python3 simulator/sim.py /tmp/test_printf.bin --trace --max-cycles=50)"
+    ]
+  }
+}
