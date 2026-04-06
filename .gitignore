@@ -1,7 +1,8 @@
 __pycache__
 .claude
-CONVERSATIONS.md
-archive
+*.bin
 *.mpu
 *.s
+archive
+CONVERSATIONS.md
 mpu.json
