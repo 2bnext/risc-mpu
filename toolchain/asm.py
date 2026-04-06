@@ -17,7 +17,8 @@ OPCODES = {
 
 SIZES = {'.8': 0, '.16': 1, '.32': 2}
 
-REGS = {f'r{i}': i for i in range(8)}
+REGS = {f'r{i}': i for i in range(7)}
+REGS['sp'] = 7
 
 # Instructions that use the AGU for their operand
 AGU_OPS = {'ld', 'st', 'add', 'sub', 'and', 'or', 'xor', 'shl', 'shr'}

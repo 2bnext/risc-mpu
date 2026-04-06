@@ -68,7 +68,7 @@ module mpu (
     localparam OP_SHL   = 5'b01111;  // 15
     localparam OP_SHR   = 5'b10000;  // 16
 
-    // Subroutine (r7 = stack pointer)
+    // Subroutine (sp = r7 = stack pointer)
     localparam OP_CALL  = 5'b10001;  // 17
     localparam OP_RET   = 5'b10010;  // 18
 
@@ -191,7 +191,7 @@ module mpu (
             call_target   <= 32'd0;
             for (i = 0; i < 8; i = i + 1)
                 regs[i] <= 32'd0;
-            regs[7] <= 32'h00010000;  // r7 = SP, top of 64KB RAM
+            regs[7] <= 32'h00010000;  // sp (r7) = SP, top of 64KB RAM
         end else begin
             // Default: deassert memory strobes
             mem_rd <= 1'b0;
@@ -281,7 +281,7 @@ module mpu (
                         end
 
                         OP_CALL: begin
-                            // r7 -= 4, [r7] = PC+4, jump to target
+                            // sp -= 4, [sp] = PC+4, jump to target
                             regs[7]     <= regs[7] - 32'd4;
                             mem_addr    <= regs[7] - 32'd4;
                             mem_wdata   <= pc + 32'd4;
@@ -292,7 +292,7 @@ module mpu (
                         end
 
                         OP_RET: begin
-                            // PC = [r7], r7 += 4
+                            // PC = [sp], sp += 4
                             mem_addr <= regs[7];
                             mem_size <= 2'b10;
                             mem_rd   <= 1'b1;

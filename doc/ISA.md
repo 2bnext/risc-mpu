@@ -3,9 +3,9 @@
 ## Overview
 
 - 32-bit fixed-width instructions, little-endian
-- 8 general-purpose 32-bit registers (r0-r7)
+- 8 general-purpose 32-bit registers (r0-sp)
 - r0 is hardwired to zero
-- r7 is the stack pointer by convention (initialized to 0x10000)
+- sp is the stack pointer by convention (initialized to 0x10000)
 - 32-bit program counter
 - 5-stage state machine: FETCH, DECODE, EXECUTE, MEM, WB
 
@@ -15,7 +15,7 @@
 |----------|------------------------------------------|
 | r0       | Always zero (hardwired, writes ignored)  |
 | r1-r6    | General purpose                          |
-| r7       | Stack pointer (initialized to 0x10000)   |
+| sp       | Stack pointer (initialized to 0x10000)   |
 
 ## Memory Map
 
@@ -40,7 +40,7 @@ All instructions are 32 bits wide.
 | Field     | Bits    | Description                                           |
 |-----------|---------|-------------------------------------------------------|
 | opcode    | [31:27] | Instruction (5 bits, 0-31)                            |
-| rd        | [26:24] | Destination/source register (3 bits, r0-r7)           |
+| rd        | [26:24] | Destination/source register (3 bits, r0-sp)           |
 | size      | [23:22] | Operand/result size                                   |
 | reg_value | [21]    | 0 = register addressing, 1 = immediate/absolute       |
 | addr_imm  | [20]    | When reg_value=1: 0 = absolute addr, 1 = immediate   |
@@ -90,7 +90,7 @@ Mode 00 is register direct: the operand is the register value itself, no memory 
 
 Mode 11 computes the address before the writeback. The index register is updated after the memory operation completes.
 
-Assembler shorthand: `[Rbase]` expands to `[r0][Rbase]` (mode 01). `[r6++]` expands to `[r0][r6+=1]`, `[r7+=-4]` expands to `[r0][r7+=-4]`.
+Assembler shorthand: `[Rbase]` expands to `[r0][Rbase]` (mode 01). `[r6++]` expands to `[r0][r6+=1]`, `[sp+=-4]` expands to `[r0][sp+=-4]`.
 
 ## Branch Payload Format
 
@@ -107,7 +107,7 @@ Branch instructions (BEQ, BNE, BLT, BGT, BLE, BGE) use a different payload layou
 | Field       | Bits    | Description                                        |
 |-------------|---------|----------------------------------------------------|
 | reg_or_imm  | [19]    | 0 = compare against register, 1 = 3-bit immediate  |
-| cmp_operand | [18:16] | Register select (r0-r7) or immediate (0-7)         |
+| cmp_operand | [18:16] | Register select (r0-sp) or immediate (0-7)         |
 | target      | [15:0]  | Branch target address (16-bit, covers full 64KB)    |
 
 The size suffix affects comparison: `.8` compares lower 8 bits (sign-extended), `.16` lower 16 bits, `.32` full 32-bit. All comparisons are signed.
@@ -274,8 +274,8 @@ st.8   0xFFFF0000, r1       ; mem.8[0xFFFF0000] = r1 (write byte to UART TX)
 st.32  [r3], r1             ; mem.32[r3] = r1 (shorthand for [r0][r3])
 st.32  [r2][r3], r1         ; mem.32[r2 + r3] = r1 (indexed)
 st.32  [r2][r3+8], r1       ; mem.32[r2 + r3 + 8] = r1 (indexed+offset)
-st.32  [r0][r7+=-4], r1     ; mem.32[r7] = r1, then r7 -= 4 (push)
-st.32  [r7+=-4], r1         ; same as above (shorthand)
+st.32  [r0][sp+=-4], r1     ; mem.32[sp] = r1, then sp -= 4 (push)
+st.32  [sp+=-4], r1         ; same as above (shorthand)
 st.8   #0x41, r2            ; mem.8[r2] = 0x41 (store immediate 'A' to addr in r2)
 ```
 
@@ -368,7 +368,7 @@ sub.32 r1, r2               ; r1 = r1 - r2 (register-register)
 sub.32 r1, #10              ; r1 = r1 - 10 (immediate)
 sub.8  r1, #1               ; r1 = (r1 - 1) & 0xFF (8-bit subtraction)
 sub.16 r1, #1               ; r1 = (r1 - 1) & 0xFFFF (16-bit subtraction)
-sub.32 r7, #16              ; r7 = r7 - 16 (allocate 16 bytes on stack)
+sub.32 sp, #16              ; sp = sp - 16 (allocate 16 bytes on stack)
 sub.32 r1, [r2]             ; r1 = r1 - mem.32[r2] (memory indirect)
 sub.32 r1, [r2][r3]         ; r1 = r1 - mem.32[r2 + r3] (indexed)
 sub.32 r1, [r2][r3+8]       ; r1 = r1 - mem.32[r2 + r3 + 8] (indexed+offset)
@@ -380,7 +380,7 @@ sub.32 r1, 0x100            ; r1 = r1 - mem.32[0x100] (absolute)
 
 - There is no borrow flag.
 - `sub.8 r1, #1` with r1 = 0x00 produces r1 = 0xFF (wraps to 255).
-- `sub.32 r7, #N` / `add.32 r7, #N` is the standard pattern for allocating/deallocating stack space.
+- `sub.32 sp, #N` / `add.32 sp, #N` is the standard pattern for allocating/deallocating stack space.
 
 ---
 
@@ -409,7 +409,7 @@ else:
 
 **Compare operand:** The `r/i` bit (payload bit 19) selects the compare source:
 
-- `r/i = 0`: compare against a register. `cmp[2:0]` selects r0–r7.
+- `r/i = 0`: compare against a register. `cmp[2:0]` selects r0–sp.
 - `r/i = 1`: compare against a 3-bit unsigned immediate (0–7). The immediate is zero-extended to 32 bits before the size-based sign extension is applied.
 
 **Branch target:** The 16-bit target field (payload bits [15:0]) is zero-extended to 32 bits. This covers the full 64KB SPRAM address space (0x0000–0xFFFF).
@@ -810,18 +810,18 @@ shr.32 r1, 0x100            ; r1 = r1 >> mem.32[0x100][4:0] (absolute)
 
 **Encoding:** `10001 | --- | -- | - | - | payload[19:0]`
 
-Push the return address (PC + 4) onto the stack and jump to the target address. The stack pointer is r7, which is decremented by 4 before the store. The target address is the 20-bit payload sign-extended to 32 bits. Does **not** use the AGU.
+Push the return address (PC + 4) onto the stack and jump to the target address. The stack pointer is sp, which is decremented by 4 before the store. The target address is the 20-bit payload sign-extended to 32 bits. Does **not** use the AGU.
 
 The rd, size, reg_value, and addr_imm fields are present in the encoding but ignored by the hardware.
 
-**Pipeline:** In EXECUTE, the hardware performs three actions simultaneously: decrements r7 by 4, issues a 32-bit memory write of (PC + 4) to the new r7 address, and latches the sign-extended target address into an internal `call_target` register. Waits in MEM for `mem_ready`. In WB, sets PC to the latched `call_target`.
+**Pipeline:** In EXECUTE, the hardware performs three actions simultaneously: decrements sp by 4, issues a 32-bit memory write of (PC + 4) to the new sp address, and latches the sign-extended target address into an internal `call_target` register. Waits in MEM for `mem_ready`. In WB, sets PC to the latched `call_target`.
 
 **Operation (step by step):**
 
 ```
 EXECUTE:
-    r7 = r7 - 4
-    mem_addr = r7 - 4             (the new r7 value)
+    sp = sp - 4
+    mem_addr = sp - 4             (the new sp value)
     mem_wdata = PC + 4            (return address)
     mem_wr = 1                    (32-bit write)
     call_target = sign_ext(payload20)
@@ -842,11 +842,11 @@ call my_function             ; push PC+4, jump to my_function
 call 0x100                   ; push PC+4, jump to address 0x100
 ```
 
-**Calling convention:** There is no hardware-enforced calling convention beyond r7 being the stack pointer. Argument passing and register preservation are up to the programmer. The return address is the instruction immediately following the CALL.
+**Calling convention:** There is no hardware-enforced calling convention beyond sp being the stack pointer. Argument passing and register preservation are up to the programmer. The return address is the instruction immediately following the CALL.
 
 **Notes:**
 
-- CALL always uses r7 as the stack pointer, regardless of the rd field.
+- CALL always uses sp as the stack pointer, regardless of the rd field.
 - Nested calls work naturally: each CALL pushes a return address, and each RET pops one.
 - The maximum callable address using the 20-bit sign-extended payload is 0x7FFFF (524287). Within the 64KB SPRAM this is never a limitation.
 
@@ -856,17 +856,17 @@ call 0x100                   ; push PC+4, jump to address 0x100
 
 **Encoding:** `10010 | --- | -- | - | - | --------------------`
 
-Pop the return address from the stack and jump to it. The stack pointer is r7, which is incremented by 4 after the load. Does **not** use the AGU.
+Pop the return address from the stack and jump to it. The stack pointer is sp, which is incremented by 4 after the load. Does **not** use the AGU.
 
 All fields other than the opcode (rd, size, reg_value, addr_imm, payload) are present in the encoding but ignored by the hardware. The instruction is typically assembled as all zeros except for the opcode bits.
 
-**Pipeline:** In EXECUTE, issues a 32-bit memory read from the address in r7. Waits in MEM for `mem_ready`. In WB, sets PC to the value read from memory and increments r7 by 4.
+**Pipeline:** In EXECUTE, issues a 32-bit memory read from the address in sp. Waits in MEM for `mem_ready`. In WB, sets PC to the value read from memory and increments sp by 4.
 
 **Operation (step by step):**
 
 ```
 EXECUTE:
-    mem_addr = r7
+    mem_addr = sp
     mem_rd = 1                    (32-bit read)
 
 MEM:
@@ -874,7 +874,7 @@ MEM:
 
 WB:
     PC = mem_rdata                (the return address)
-    r7 = r7 + 4
+    sp = sp + 4
 ```
 
 **Examples:**
@@ -885,9 +885,9 @@ ret                          ; pop return address, jump to it
 
 **Notes:**
 
-- RET always uses r7 as the stack pointer, regardless of the rd field.
-- If r7 does not point to a valid return address (e.g., stack corruption or calling RET without a matching CALL), the PC will be set to whatever value is in memory at r7, leading to undefined behavior.
-- RET and CALL are complementary: CALL pushes (PC+4) and decrements r7, RET pops the address and increments r7.
+- RET always uses sp as the stack pointer, regardless of the rd field.
+- If sp does not point to a valid return address (e.g., stack corruption or calling RET without a matching CALL), the PC will be set to whatever value is in memory at sp, leading to undefined behavior.
+- RET and CALL are complementary: CALL pushes (PC+4) and decrements sp, RET pops the address and increments sp.
 
 ---
 
@@ -899,18 +899,18 @@ ret                          ; pop return address, jump to it
 
 ## Stack Operations
 
-No dedicated PUSH/POP. Use AGU writeback mode with r7:
+No dedicated PUSH/POP. Use AGU writeback mode with sp:
 
 ```
-st.32 [r0][r7+=-4], r1      ; push r1
-ld.32 r1, [r0][r7+=4]       ; pop r1
+st.32 [r0][sp+=-4], r1      ; push r1
+ld.32 r1, [r0][sp+=4]       ; pop r1
 ```
 
 Or with shorthand:
 
 ```
-st.32 [r7+=-4], r1          ; push r1
-ld.32 r1, [r7+=4]           ; pop r1
+st.32 [sp+=-4], r1          ; push r1
+ld.32 r1, [sp+=4]           ; pop r1
 ```
 
 ## Assembler Directives

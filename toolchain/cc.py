@@ -18,7 +18,7 @@ Register usage:
   r2  = secondary (right-hand operand)
   r3-r5 = temporaries (pushed when needed)
   r6  = frame pointer
-  r7  = stack pointer (SP)
+  sp  = stack pointer (SP)
 
 Calling convention:
   - Arguments pushed right-to-left onto the stack
@@ -642,17 +642,17 @@ class CodeGen:
 
         self.emit(f'{func.name}:')
         # Prologue: save r6 (pre-decrement push)
-        self.emit('                sub.32  r7, #4')
-        self.emit('                st.32   [r7], r6')
+        self.emit('                sub.32  sp, #4')
+        self.emit('                st.32   [sp], r6')
         if local_size > 0:
-            self.emit(f'                sub.32  r7, #{local_size}')
+            self.emit(f'                sub.32  sp, #{local_size}')
 
         # Stack layout after prologue:
-        #   r7+0 .. r7+local_size-4   = local variables
-        #   r7+local_size              = saved r6
-        #   r7+local_size+4            = return address (pushed by call)
-        #   r7+local_size+8            = arg0
-        #   r7+local_size+12           = arg1, etc.
+        #   sp+0 .. sp+local_size-4   = local variables
+        #   sp+local_size              = saved r6
+        #   sp+local_size+4            = return address (pushed by call)
+        #   sp+local_size+8            = arg0
+        #   sp+local_size+12           = arg1, etc.
 
         # Map params
         for i, (ptype, pname) in enumerate(func.params):
@@ -668,8 +668,8 @@ class CodeGen:
         # Epilogue
         self.emit(f'.epilogue:')
         if local_size > 0:
-            self.emit(f'                add.32  r7, #{local_size}')
-        self.emit('                ld.32   r6, [r7+=4]')
+            self.emit(f'                add.32  sp, #{local_size}')
+        self.emit('                ld.32   r6, [sp+=4]')
         self.emit('                ret')
         self.emit('')
 
@@ -716,12 +716,12 @@ class CodeGen:
         return base_off + self.stack_depth * 4
 
     def push(self, reg):
-        self.emit(f'                sub.32  r7, #4')
-        self.emit(f'                st.32   [r7], r{reg}')
+        self.emit(f'                sub.32  sp, #4')
+        self.emit(f'                st.32   [sp], r{reg}')
         self.stack_depth += 1
 
     def pop(self, reg):
-        self.emit(f'                ld.32   r{reg}, [r0][r7+=4]')
+        self.emit(f'                ld.32   r{reg}, [r0][sp+=4]')
         self.stack_depth -= 1
 
     def gen_stmt(self, node):
@@ -733,12 +733,12 @@ class CodeGen:
                 self.gen_expr(node.init_expr, 1)
                 off = self.var_offset(node.name)
                 sz = self.size_suffix(node.var_type)
-                self.emit(f'                st{sz}   [r7+{off}], r1')
-                # Can't use [r7+off] syntax. Use add to compute address.
+                self.emit(f'                st{sz}   [sp+{off}], r1')
+                # Can't use [sp+off] syntax. Use add to compute address.
                 # Actually our AGU supports [Rbase][Ridx+offset] mode.
-                # st.32 [r7][r0+offset], r1 — but we need base=r7, idx=r0.
+                # st.32 [sp][r0+offset], r1 — but we need base=sp, idx=r0.
                 # Rewrite:
-                self.output[-1] = f'                st{sz}   [r7][r0+{off}], r1'
+                self.output[-1] = f'                st{sz}   [sp][r0+{off}], r1'
         elif isinstance(node, ExprStmt):
             self.gen_expr(node.expr, 1)
         elif isinstance(node, ReturnStmt):
@@ -809,7 +809,7 @@ class CodeGen:
                 off = self.var_offset(node.name)
                 vtype, _ = self.locals[node.name]
                 sz = self.size_suffix(vtype)
-                self.emit(f'                ld{sz}   r{dest}, [r7][r0+{off}]')
+                self.emit(f'                ld{sz}   r{dest}, [sp][r0+{off}]')
             elif node.name in self.globals:
                 vtype, label = self.globals[node.name]
                 sz = self.size_suffix(vtype)
@@ -824,7 +824,7 @@ class CodeGen:
                     off = self.var_offset(node.target.name)
                     vtype, _ = self.locals[node.target.name]
                     sz = self.size_suffix(vtype)
-                    self.emit(f'                st{sz}   [r7][r0+{off}], r{dest}')
+                    self.emit(f'                st{sz}   [sp][r0+{off}], r{dest}')
                 elif node.target.name in self.globals:
                     vtype, label = self.globals[node.target.name]
                     sz = self.size_suffix(vtype)
@@ -932,9 +932,9 @@ class CodeGen:
                       '^': 'xor', '<<': 'shl', '>>': 'shr'}
             if op in OP_MAP:
                 self.push(other)
-                self.emit(f'                {OP_MAP[op]}.32 r{dest}, [r7]')
+                self.emit(f'                {OP_MAP[op]}.32 r{dest}, [sp]')
                 # Pop without loading (just adjust SP)
-                self.emit(f'                add.32  r7, #4')
+                self.emit(f'                add.32  sp, #4')
                 self.stack_depth -= 1
             else:
                 raise ValueError(f"Unsupported operator: {op}")
@@ -960,25 +960,25 @@ class CodeGen:
                 if node.expr.name in self.locals:
                     off = self.var_offset(node.expr.name)
                     self.emit(f'                ld.32   r{dest}, #0')
-                    self.emit(f'                add.32  r{dest}, [r0][r7]')
-                    # That loads mem[r7], not r7 itself. Need r7's value.
-                    # Use: push r7, load from stack... same problem.
-                    # Workaround: compute r7 + offset via immediate add
+                    self.emit(f'                add.32  r{dest}, [r0][sp]')
+                    # That loads mem[sp], not sp itself. Need sp's value.
+                    # Use: push sp, load from stack... same problem.
+                    # Workaround: compute sp + offset via immediate add
                     self.output.pop()
                     self.output.pop()
-                    # We'll store r7 to a temp stack slot and load it
-                    self.push(7)  # this changes r7!
-                    self.emit(f'                ld.32   r{dest}, [r7]')  # load old r7
-                    # Actually: push stores old r7 at [old_r7 - 4], then r7 = old_r7 - 4
-                    # [r7] = old_r7 - 4... no. We stored r7 (the pre-decrement value) at the
+                    # We'll store sp to a temp stack slot and load it
+                    self.push(7)  # this changes sp!
+                    self.emit(f'                ld.32   r{dest}, [sp]')  # load old sp
+                    # Actually: push stores old sp at [old_sp - 4], then sp = old_sp - 4
+                    # [sp] = old_sp - 4... no. We stored sp (the pre-decrement value) at the
                     # effective address. Wait, let's check:
-                    # st [r0][r7+=-4], r7: eff_addr = r0+r7 = r7. Stores r7 at [r7].
-                    # Then r7 = r7 - 4. So [old_r7] has old_r7 value. [r7+4] has old_r7.
-                    self.emit(f'                ld.32   r{dest}, [r7][r0+4]')
+                    # st [r0][sp+=-4], sp: eff_addr = r0+sp = sp. Stores sp at [sp].
+                    # Then sp = sp - 4. So [old_sp] has old_sp value. [sp+4] has old_sp.
+                    self.emit(f'                ld.32   r{dest}, [sp][r0+4]')
                     self.output[-2] = f'                ; addr-of via stack'
                     self.emit(f'                add.32  r{dest}, #{off + 4}')  # +4 for the push
-                    # Restore r7
-                    self.emit(f'                add.32  r7, #4')
+                    # Restore sp
+                    self.emit(f'                add.32  sp, #4')
                     self.stack_depth -= 1
                 elif node.expr.name in self.globals:
                     _, label = self.globals[node.expr.name]
@@ -993,7 +993,7 @@ class CodeGen:
             self.emit(f'                ; array access — push index, load via [base][idx]')
             self.push(other)
             self.emit(f'                ld.8    r{dest}, [r{dest}][r{other}]')
-            self.emit(f'                add.32  r7, #4')
+            self.emit(f'                add.32  sp, #4')
             self.stack_depth -= 1
 
         elif isinstance(node, FuncCall):
@@ -1005,7 +1005,7 @@ class CodeGen:
             # Clean up args
             arg_size = len(node.args) * 4
             if arg_size > 0:
-                self.emit(f'                add.32  r7, #{arg_size}')
+                self.emit(f'                add.32  sp, #{arg_size}')
                 self.stack_depth -= len(node.args)
             # Result is in r1
             if dest != 1:

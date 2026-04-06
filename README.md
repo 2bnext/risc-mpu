@@ -2,10 +2,11 @@
 
 A 32-bit RISC processor with a custom instruction set, built from scratch in Verilog and running on an iCESugar 1.5 FPGA board (Lattice iCE40UP5K). The entire system — processor, memory, UART, bootloader, assembler, C compiler, and simulator — fits in about 1000 lines of Verilog and 1000 lines of Python.
 
+
 ## Architecture
 
 - **32-bit fixed-width instructions** with a uniform encoding: 5-bit opcode, 3-bit register, 2-bit size, and a 20-bit payload
-- **8 registers** (r0 hardwired to zero, r7 is the stack pointer)
+- **8 registers** (r0 hardwired to zero, r7 aliased as sp (stack pointer))
 - **19 instructions**: LD, LDH, ST, ADD, SUB, AND, OR, XOR, SHL, SHR, 6 branches, CALL, RET, NOP
 - **Address Generation Unit (AGU)** shared by 9 instructions, providing register-direct, immediate, absolute, indexed, indexed+offset, and post-increment addressing modes
 - **5-stage state machine**: FETCH, DECODE, EXECUTE, MEM, WB

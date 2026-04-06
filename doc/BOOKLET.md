@@ -212,7 +212,7 @@ The MPU (Minimal Processing Unit) is a 32-bit RISC processor designed from scrat
 Here's what defines it:
 
 - **32-bit architecture**: addresses, registers, and instructions are all 32 bits.
-- **8 registers**: r0 through r7. r0 is always zero. r7 is the stack pointer.
+- **8 registers**: r0 through sp. r0 is always zero. sp is the stack pointer.
 - **19 instructions**: NOP, LD, LDH, ST, ADD, SUB, six branches, AND, OR, XOR, SHL, SHR, CALL, RET.
 - **Unified instruction format**: every instruction is 32 bits with the same field layout.
 - **Address Generation Unit (AGU)**: one flexible system handles all operand addressing for nine different instructions.
@@ -317,7 +317,7 @@ There is no ROM, no flash, no separate instruction and data memory. Everything i
 |---|---|
 | r0 | Hardwired to zero. Writes are ignored. Reads always return 0. |
 | r1 - r6 | General purpose. Use them for anything. |
-| r7 | Stack pointer. Initialized to 0x10000 (top of 64 KB). Grows downward. |
+| sp | Stack pointer. Initialized to 0x10000 (top of 64 KB). Grows downward. |
 
 Having r0 hardwired to zero is a classic RISC trick. It gives you a constant you always need without burning an instruction to load it. It also lets you express common operations elegantly:
 
@@ -365,7 +365,7 @@ Five bits of opcode give room for 32 instructions (19 are used). Three bits of r
 
 **Composability**: the few instructions combine to express complex operations:
 
-- No PUSH/POP? Use `st.32 [r7+=-4], r1` (store and decrement) and `ld.32 r1, [r7+=4]` (load and increment).
+- No PUSH/POP? Use `st.32 [sp+=-4], r1` (store and decrement) and `ld.32 r1, [sp+=4]` (load and increment).
 - No MOV? Use `ld.32 r1, r2` (register-direct AGU mode).
 - No NOT? Use `xor.32 r1, #-1` (XOR with all ones).
 - No NEG? Use `xor.32 r1, #-1` then `add.32 r1, #1` (two's complement).
@@ -413,7 +413,7 @@ Let's walk through this line by line.
 
 **`beq.8 r1, #0, stop`** checks if the byte we just loaded is zero (the null terminator). The `.8` suffix means the comparison uses only the lower 8 bits, sign-extended. If r1 is zero, we branch to `stop`.
 
-**`call output`** pushes the return address onto the stack and jumps to the `output` subroutine. Internally: r7 decreases by 4, the address of the next instruction (PC + 4) is written to [r7], and PC is set to the address of `output`.
+**`call output`** pushes the return address onto the stack and jumps to the `output` subroutine. Internally: sp decreases by 4, the address of the next instruction (PC + 4) is written to [sp], and PC is set to the address of `output`.
 
 **`jmp .loop`** is the pseudo-instruction for `beq.32 r0, #0, .loop`. Since r0 is always zero and the immediate is zero, the branch is always taken. Unconditional jump.
 
@@ -423,7 +423,7 @@ Let's walk through this line by line.
 
 **`st.8 0xFFFF0000, r1`** writes the lower byte of r1 to the UART transmit register. This is what actually sends the character out the serial port.
 
-**`ret`** pops the return address from the stack and jumps to it. Internally: PC is loaded from [r7], then r7 increases by 4.
+**`ret`** pops the return address from the stack and jumps to it. Internally: PC is loaded from [sp], then sp increases by 4.
 
 **`db 'Hello, world!\0'`** defines raw bytes in the program. The string is placed in memory right after the code. The `\0` is the null terminator.
 
@@ -489,7 +489,7 @@ With only 8 registers, you must think carefully about allocation. Here are the c
 | r1 | Temporary / return value / function argument. |
 | r2 - r4 | Temporaries. Subroutines may clobber these freely. |
 | r5 - r6 | Callee-saved. Subroutines must save and restore them. |
-| r7 | Stack pointer. Touched only for push/pop/call/ret. |
+| sp | Stack pointer. Touched only for push/pop/call/ret. |
 
 ### Loading Values
 
@@ -575,7 +575,7 @@ Consider what you get from these four modes:
 
 **String/array traversal** (mode 11): `ld.8 r1, [r0][r6+=1]` loads a byte from r6 and increments r6 by 1 after. This is the classic `*ptr++` operation. You can walk through an array without a separate increment instruction.
 
-**Stack push/pop**: `st.32 [r0][r7+=-4], r1` decrements r7 by 4 and stores r1. This is `push`. `ld.32 r1, [r0][r7+=4]` loads and increments r7 by 4. This is `pop`. No dedicated push/pop instructions needed.
+**Stack push/pop**: `st.32 [r0][sp+=-4], r1` decrements sp by 4 and stores r1. This is `push`. `ld.32 r1, [r0][sp+=4]` loads and increments sp by 4. This is `pop`. No dedicated push/pop instructions needed.
 
 ### Assembler Shorthands
 
@@ -586,7 +586,7 @@ The assembler provides shortcuts for common patterns:
 | `[r3]` | `[r0][r3]` | Base is zero, so address = 0 + r3 = r3 |
 | `[r6++]` | `[r0][r6+=1]` | Post-increment by 1 |
 | `[r6--]` | `[r0][r6+=-1]` | Post-decrement by 1 |
-| `[r7+=-4]` | `[r0][r7+=-4]` | Pre-decrement (used for push) |
+| `[sp+=-4]` | `[r0][sp+=-4]` | Pre-decrement (used for push) |
 
 ---
 
@@ -669,16 +669,16 @@ There's no conditional move or predicated execution. Use branches:
 
 ## 15. Subroutines and the Stack
 
-The MPU has dedicated CALL and RET instructions that use r7 as the stack pointer.
+The MPU has dedicated CALL and RET instructions that use sp as the stack pointer.
 
 **CALL** does three things atomically:
-1. Decrement r7 by 4.
-2. Store the return address (PC + 4) to the new [r7].
+1. Decrement sp by 4.
+2. Store the return address (PC + 4) to the new [sp].
 3. Set PC to the target address.
 
 **RET** does the reverse:
-1. Load PC from [r7].
-2. Increment r7 by 4.
+1. Load PC from [sp].
+2. Increment sp by 4.
 
 ### A Complete Subroutine
 
@@ -702,18 +702,18 @@ If your subroutine uses registers that the caller might need, save them on the s
 ```
 my_function:
                 ; prologue: save callee-saved registers
-                st.32   [r7+=-4], r6     ; push r6
-                st.32   [r7+=-4], r5     ; push r5
+                st.32   [sp+=-4], r6     ; push r6
+                st.32   [sp+=-4], r5     ; push r5
 
                 ; ... function body using r5 and r6 ...
 
                 ; epilogue: restore and return
-                ld.32   r5, [r7+=4]      ; pop r5
-                ld.32   r6, [r7+=4]      ; pop r6
+                ld.32   r5, [sp+=4]      ; pop r5
+                ld.32   r6, [sp+=4]      ; pop r6
                 ret
 ```
 
-The push/pop pattern uses the AGU post-increment mode: `[r7+=-4]` decrements r7 by 4 after computing the address (push), and `[r7+=4]` increments r7 by 4 after loading (pop).
+The push/pop pattern uses the AGU post-increment mode: `[sp+=-4]` decrements sp by 4 after computing the address (push), and `[sp+=4]` increments sp by 4 after loading (pop).
 
 ### Passing Arguments
 
@@ -722,12 +722,12 @@ Arguments are passed on the stack. The caller pushes arguments right-to-left, ca
 ```
 ; calling putchar('A')
                 ld.32   r1, #65          ; 'A'
-                st.32   [r7+=-4], r1     ; push argument
+                st.32   [sp+=-4], r1     ; push argument
                 call    putchar
-                add.32  r7, #4           ; clean up stack (1 arg * 4 bytes)
+                add.32  sp, #4           ; clean up stack (1 arg * 4 bytes)
 ```
 
-Inside the function, arguments are accessed relative to r7 with an offset that accounts for the saved registers and the return address.
+Inside the function, arguments are accessed relative to sp with an offset that accounts for the saved registers and the return address.
 
 ### Stack Frame Layout
 
@@ -735,13 +735,13 @@ After a function saves r6 and r5:
 
 ```
 Address        Contents
-r7 + 12       argument 0  (pushed by caller)
-r7 + 8        return address  (pushed by CALL)
-r7 + 4        saved r6  (pushed by function)
-r7 + 0        saved r5  (pushed by function)   <-- r7 points here
+sp + 12       argument 0  (pushed by caller)
+sp + 8        return address  (pushed by CALL)
+sp + 4        saved r6  (pushed by function)
+sp + 0        saved r5  (pushed by function)   <-- sp points here
 ```
 
-To access argument 0: `ld.32 r1, [r7][r0+12]` (base r7, index r0=0, offset 12).
+To access argument 0: `ld.32 r1, [sp][r0+12]` (base sp, index r0=0, offset 12).
 
 ---
 
@@ -886,19 +886,19 @@ The compiler generates:
                 jmp     __start
 
 main:
-                sub.32  r7, #4
-                st.32   [r7], r6             ; save return address register
+                sub.32  sp, #4
+                st.32   [sp], r6             ; save return address register
                 ld.32   r1, #1
                 add.32  r1, #2               ; compute 1 + 2 = 3
-                sub.32  r7, #4
-                st.32   [r7], r1             ; push argument: 3
+                sub.32  sp, #4
+                st.32   [sp], r1             ; push argument: 3
                 ld.32   r1, #__str_1
-                sub.32  r7, #4
-                st.32   [r7], r1             ; push argument: format string
+                sub.32  sp, #4
+                st.32   [sp], r1             ; push argument: format string
                 call    printf
-                add.32  r7, #8               ; clean up 2 arguments
+                add.32  sp, #8               ; clean up 2 arguments
 .epilogue:
-                ld.32   r6, [r7+=4]          ; restore saved register
+                ld.32   r6, [sp+=4]          ; restore saved register
                 ret
 
 __start:
