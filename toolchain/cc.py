@@ -553,7 +553,7 @@ class Parser:
 # ---------------------------------------------------------------------------
 
 # Standard library functions — don't generate code for these, they're in stdlib.asm
-STDLIB_FUNCS = {'putchar', 'puts', 'sleep', 'set_led', 'printf'}
+STDLIB_FUNCS = {'putchar', 'puts', 'sleep', 'setleds', 'printf'}
 
 
 class CodeGen:

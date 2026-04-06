@@ -1,6 +1,6 @@
 # Programming the MPU
 
-*A beginner's guide to a handcrafted processor*
+*A guide to a handcrafted processor*
 
 ---
 
@@ -910,7 +910,7 @@ __str_1: db 'Hello 1+2=%d\0'
 
 The compiler generates straightforward code: compute the expression, push arguments right-to-left, call the function, clean up the stack. The `__start` entry point calls `main` and halts when it returns.
 
-The standard library (linked after the compiled code) provides `printf`, `putchar`, `puts`, `sleep`, and `set_led`.
+The standard library (linked after the compiled code) provides `printf`, `putchar`, `puts`, `sleep`, and `setleds`.
 
 ### The Development Workflow
 

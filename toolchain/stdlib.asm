@@ -55,10 +55,10 @@ sleep:
                 ld.32   r6, [r0][sp+=4]     ; restore r6
                 ret
 
-; ---- set_led(int value) ----
+; ---- setleds(int value) ----
 ; Argument: LED bits on stack at [sp+8]
 ; bit 0 = green, bit 1 = red, bit 2 = blue
-set_led:
+setleds:
                 sub.32  sp, #4              ; \
                 st.32   [sp], r6            ; / save r6
                 ld.32   r1, [sp][r0+8]

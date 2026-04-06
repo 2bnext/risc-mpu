@@ -40,7 +40,7 @@ toolchain/
   cc.py          C compiler: .c -> .asm (subset of C)
   sim.py         Cycle-accurate simulator with optional trace output
   run.py         Uploads .mpu binaries to the board via UART
-  stdlib.asm     Standard library (printf, putchar, puts, sleep, set_led)
+  stdlib.asm     Standard library (printf, putchar, puts, sleep, setleds)
 ```
 
 ### Quick start

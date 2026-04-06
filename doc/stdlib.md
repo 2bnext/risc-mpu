@@ -60,10 +60,10 @@ Busy-wait delay loop. The argument is the number of loop iterations, not millise
 sleep(3000);  // ~1ms delay at 12MHz
 ```
 
-### set_led
+### setleds
 
 ```c
-void set_led(int value);
+void setleds(int value);
 ```
 
 Controls the onboard RGB LED via the I/O register at `0xFFFF0008`.
@@ -75,7 +75,7 @@ Controls the onboard RGB LED via the I/O register at `0xFFFF0008`.
 | 2   | Blue  |
 
 ```c
-set_led(7);  // all colors on (white)
-set_led(3);  // green + red (yellow)
-set_led(0);  // off
+setleds(7);  // all colors on (white)
+setleds(3);  // green + red (yellow)
+setleds(0);  // off
 ```
