@@ -1,5 +1,7 @@
+__pycache__
 .claude
-doc/CONVERSATIONS.md
-mpu/archive/
+CONVERSATIONS.md
+archive
 *.mpu
+*.s
 mpu.json

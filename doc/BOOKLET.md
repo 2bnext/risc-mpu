@@ -916,6 +916,8 @@ The compiler generates straightforward code: compute the expression, push argume
 
 The standard library (linked after the compiled code) provides `printf`, `putchar`, `puts`, `sleep`, and `setleds`.
 
+C is not the only option. The toolchain ships two other compilers — a Tiny BASIC (`toolchain/basic.py`) and a small Pascal (`toolchain/pas.py`) — that target the same `.mpu` binary format and link against the same standard library. They exist mostly for fun and to demonstrate that the ISA is general-purpose enough to host very different language front-ends. See [`doc/toolchain/basic.md`](toolchain/basic.md) and [`doc/toolchain/pas.md`](toolchain/pas.md) for the details.
+
 ### The Development Workflow
 
 ```
@@ -931,13 +933,13 @@ Or write assembly directly:
                asm.py              flash.py
 ```
 
-You can also use the simulator to test without hardware:
+You can also use the simulator (`toolchain/sim.py`) to test without hardware:
 
 ```bash
 python3 toolchain/sim.py hello.mpu
 ```
 
-The simulator executes instructions step by step, printing UART output and optionally showing register state and memory traces.
+The simulator executes instructions step by step, printing UART output and optionally showing register state and memory traces. It models the same memory map and peripherals as the FPGA, so most programs developed in the sim run unchanged on the board. See [`doc/toolchain/sim.md`](toolchain/sim.md) for the full reference, including `--trace` and `--max-cycles`.
 
 ---
 

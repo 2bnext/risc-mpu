@@ -6,6 +6,9 @@ TOOLCHAIN := ../toolchain
 %.mpu: %.bas
 	python3 $(TOOLCHAIN)/basic.py $<
 
+%.mpu: %.pas
+	python3 $(TOOLCHAIN)/pas.py $<
+
 %.mpu: %.asm
 	python3 $(TOOLCHAIN)/asm.py --opcodes $<
 
