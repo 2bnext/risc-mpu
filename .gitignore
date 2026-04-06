@@ -1,3 +1,5 @@
+.claude
+CONVERSATIONS.md
 mpu/archive/
 *.mpu
-CONVERSATIONS.md
+mpu.json
