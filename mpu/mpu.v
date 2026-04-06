@@ -75,6 +75,21 @@ module mpu (
     // ---- Register file (r0 is hardwired to 0) ----
     reg [31:0] regs [0:7];
 
+    // ---- Size merge: write only the sized portion, preserve upper bits ----
+    function [31:0] size_merge;
+        input [31:0] old_val;
+        input [31:0] new_val;
+        input [1:0]  sz;
+        case (sz)
+            2'b00:   size_merge = {old_val[31:8],  new_val[7:0]};
+            2'b01:   size_merge = {old_val[31:16], new_val[15:0]};
+            default: size_merge = new_val;
+        endcase
+    endfunction
+
+    // ---- ALU scratch (combinational, used inside always block) ----
+    reg [31:0] alu_raw;
+
     // ---- Latched call target ----
     reg [31:0] call_target;
 
@@ -242,15 +257,17 @@ module mpu (
                             if (agu_is_imm) begin
                                 if (rd != 0) begin
                                     case (opcode)
-                                        OP_LD:  regs[rd] <= agu_imm_value;
-                                        OP_ADD: regs[rd] <= regs[rd] + agu_imm_value;
-                                        OP_SUB: regs[rd] <= regs[rd] - agu_imm_value;
-                                        OP_AND: regs[rd] <= regs[rd] & agu_imm_value;
-                                        OP_OR:  regs[rd] <= regs[rd] | agu_imm_value;
-                                        OP_XOR: regs[rd] <= regs[rd] ^ agu_imm_value;
-                                        OP_SHL: regs[rd] <= regs[rd] << agu_imm_value[4:0];
-                                        OP_SHR: regs[rd] <= regs[rd] >> agu_imm_value[4:0];
+                                        OP_LD:  alu_raw = agu_imm_value;
+                                        OP_ADD: alu_raw = regs[rd] + agu_imm_value;
+                                        OP_SUB: alu_raw = regs[rd] - agu_imm_value;
+                                        OP_AND: alu_raw = regs[rd] & agu_imm_value;
+                                        OP_OR:  alu_raw = regs[rd] | agu_imm_value;
+                                        OP_XOR: alu_raw = regs[rd] ^ agu_imm_value;
+                                        OP_SHL: alu_raw = regs[rd] << agu_imm_value[4:0];
+                                        OP_SHR: alu_raw = regs[rd] >> agu_imm_value[4:0];
+                                        default: alu_raw = 32'd0;
                                     endcase
+                                    regs[rd] <= size_merge(regs[rd], alu_raw, size);
                                 end
                                 pc    <= pc + 32'd4;
                                 state <= S_FETCH;
@@ -318,15 +335,17 @@ module mpu (
                             // ALU ops with memory operand
                             if (rd != 0) begin
                                 case (opcode)
-                                    OP_LD:  regs[rd] <= mem_rdata;
-                                    OP_ADD: regs[rd] <= regs[rd] + mem_rdata;
-                                    OP_SUB: regs[rd] <= regs[rd] - mem_rdata;
-                                    OP_AND: regs[rd] <= regs[rd] & mem_rdata;
-                                    OP_OR:  regs[rd] <= regs[rd] | mem_rdata;
-                                    OP_XOR: regs[rd] <= regs[rd] ^ mem_rdata;
-                                    OP_SHL: regs[rd] <= regs[rd] << mem_rdata[4:0];
-                                    OP_SHR: regs[rd] <= regs[rd] >> mem_rdata[4:0];
+                                    OP_LD:  alu_raw = mem_rdata;
+                                    OP_ADD: alu_raw = regs[rd] + mem_rdata;
+                                    OP_SUB: alu_raw = regs[rd] - mem_rdata;
+                                    OP_AND: alu_raw = regs[rd] & mem_rdata;
+                                    OP_OR:  alu_raw = regs[rd] | mem_rdata;
+                                    OP_XOR: alu_raw = regs[rd] ^ mem_rdata;
+                                    OP_SHL: alu_raw = regs[rd] << mem_rdata[4:0];
+                                    OP_SHR: alu_raw = regs[rd] >> mem_rdata[4:0];
+                                    default: alu_raw = 32'd0;
                                 endcase
+                                regs[rd] <= size_merge(regs[rd], alu_raw, size);
                             end
                             pc    <= pc + 32'd4;
                             state <= S_FETCH;

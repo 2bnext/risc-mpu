@@ -3,7 +3,7 @@
 import serial, struct, sys, time
 
 if len(sys.argv) < 2:
-    print(f"Usage: {sys.argv[0]} <program.bin> [serial_port]")
+    print(f"Usage: {sys.argv[0]} <program.mpu> [serial_port]")
     sys.exit(1)
 
 bin_file = sys.argv[1]

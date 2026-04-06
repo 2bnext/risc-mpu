@@ -188,11 +188,7 @@ printf:
                 st.32   [r7], r5            ; / save fmt pointer
                 sub.32  r7, #4              ; \
                 st.32   [r7], r3            ; / save arg offset
-                ; Copy r2 to r3 via stack
-                sub.32  r7, #4
-                st.32   [r7], r2            ; push r2
-                ld.32   r3, [r7]            ; r3 = value
-                add.32  r7, #4              ; discard push
+                ld.32   r3, r2              ; r3 = value (register move!)
                 ; Handle negative
                 bge.32  r3, #0, .dpos
                 ld.32   r1, #45             ; '-'
@@ -249,20 +245,13 @@ printf:
                 st.32   [r7], r5            ; / save fmt pointer
                 sub.32  r7, #4              ; \
                 st.32   [r7], r3            ; / save arg offset
-                ; Copy r2 to r3 via stack
-                sub.32  r7, #4
-                st.32   [r7], r2
-                ld.32   r3, [r7]            ; r3 = value
-                add.32  r7, #4
+                ld.32   r3, r2              ; r3 = value (register move!)
                 ld.32   r2, #0              ; started flag
                 ld.32   r5, #8              ; nibble count
 .xnib:
                 beq.32  r5, #0, .xdn
-                ; Extract top nibble: copy r3 to r1, shr 28, mask
-                sub.32  r7, #4
-                st.32   [r7], r3
-                ld.32   r1, [r7]
-                add.32  r7, #4
+                ; Extract top nibble
+                ld.32   r1, r3              ; r1 = value (register move!)
                 shr.32  r1, #28
                 and.32  r1, #15
                 ; Leading zero check

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-MPU ISA simulator. Executes a .bin file and prints UART output.
+MPU ISA simulator. Executes a .mpu file and prints UART output.
 
-Usage: sim.py <program.bin> [--trace] [--max-cycles N]
+Usage: sim.py <program.mpu> [--trace] [--max-cycles N]
 """
 
 import sys
@@ -185,10 +185,18 @@ class MPU:
 
         elif opcode == OP_LD:
             if is_imm:
-                self.reg_write(rd, imm_value)
+                new_val = imm_value
             else:
-                val = self.mem_read(eff_addr, size)
-                self.reg_write(rd, val)
+                new_val = self.mem_read(eff_addr, size)
+            # Size merge: only write the sized portion, preserve upper bits
+            old_val = self.reg_read(rd)
+            if size == 0:  # .8
+                merged = (old_val & 0xFFFFFF00) | (new_val & 0xFF)
+            elif size == 1:  # .16
+                merged = (old_val & 0xFFFF0000) | (new_val & 0xFFFF)
+            else:  # .32
+                merged = new_val
+            self.reg_write(rd, merged)
             if wb_en:
                 self.reg_write(wb_reg, wb_val)
             self.pc += 4
@@ -229,6 +237,12 @@ class MPU:
                 result = rd_val << (operand & 0x1F)
             elif opcode == OP_SHR:
                 result = rd_val >> (operand & 0x1F)
+            # Size merge: write only the sized portion, preserve upper bits
+            old_val = self.reg_read(rd)
+            if size == 0:  # .8
+                result = (old_val & 0xFFFFFF00) | (result & 0xFF)
+            elif size == 1:  # .16
+                result = (old_val & 0xFFFF0000) | (result & 0xFFFF)
             self.reg_write(rd, result)
             if wb_en:
                 self.reg_write(wb_reg, wb_val)
@@ -332,7 +346,7 @@ def main():
             max_cycles = int(f.split('=')[1])
 
     if not args:
-        print(f"Usage: {sys.argv[0]} [--trace] [--max-cycles=N] <program.bin>", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} [--trace] [--max-cycles=N] <program.mpu>", file=sys.stderr)
         sys.exit(1)
 
     with open(args[0], 'rb') as f:

@@ -589,14 +589,14 @@ def main():
     show_listing = '--opcodes' in flags
 
     if len(args) < 1:
-        print(f"Usage: {sys.argv[0]} [--opcodes] <input.asm> [output.bin]", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} [--opcodes] <input.asm> [output.mpu]", file=sys.stderr)
         sys.exit(1)
 
     input_file = args[0]
     if len(args) >= 2:
         output_file = args[1]
     else:
-        output_file = input_file.rsplit('.', 1)[0] + '.bin'
+        output_file = input_file.rsplit('.', 1)[0] + '.mpu'
 
     with open(input_file) as f:
         source = f.read()
