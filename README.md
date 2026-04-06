@@ -1,4 +1,4 @@
-# icesugar-mpu
+# risc-mpu
 
 A 32-bit RISC processor with a custom instruction set, built from scratch in Verilog and running on an iCESugar 1.5 FPGA board (Lattice iCE40UP5K). The entire system — processor, memory, UART, bootloader, assembler, C compiler, and simulator — fits in about 1000 lines of Verilog and 1000 lines of Python.
 
