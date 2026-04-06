@@ -5,3 +5,23 @@ set_io led_g  41
 set_io uart_tx 4
 set_io uart_rx 6
 set_io btn_s2  18
+
+# GPIO[0..7] — placeholder pins. Edit these to match the PMOD header you
+# want to use on your iCESugar 1.5. Any 8 free package pins will do.
+set_io gpio[0] 9
+set_io gpio[1] 10
+set_io gpio[2] 11
+set_io gpio[3] 12
+set_io gpio[4] 19
+set_io gpio[5] 20
+set_io gpio[6] 21
+set_io gpio[7] 23
+
+# I2C — placeholder pins. External pull-ups (2.2–10 kΩ) required.
+set_io i2c_scl 25
+set_io i2c_sda 26
+
+# Sigma-delta ADC — placeholder pins. Wire as in mpu/adc.v: external R-R-C
+# network between adc_out, the analog input, and adc_in.
+set_io adc_in  27
+set_io adc_out 28

@@ -11,7 +11,7 @@ A 32-bit RISC processor with a custom instruction set, built from scratch in Ver
 - **Address Generation Unit (AGU)** shared by 9 instructions, providing register-direct, immediate, absolute, indexed, indexed+offset, and post-increment addressing modes
 - **5-stage state machine**: FETCH, DECODE, EXECUTE, MEM, WB
 - **64 KB SPRAM** for program and data (unified memory)
-- **Memory-mapped I/O**: UART TX/RX at `0xFFFF0000`, LED register at `0xFFFF0008`
+- **Memory-mapped I/O**: UART TX/RX at `0xFFFF0000`, LED register at `0xFFFF0008`, 8-bit GPIO at `0xFFFF0010`/`0xFFFF0014`, I2C master at `0xFFFF0018`/`0xFFFF001C`
 
 ## Hardware
 
@@ -26,6 +26,7 @@ mpu/
   uart_tx.v      UART transmitter
   uart_rx.v      UART receiver
   bootloader.v   Loads programs from UART into SPRAM
+  i2c.v          ~100 kHz I2C master peripheral
   mpu.pcf        Pin constraints for iCESugar 1.5
   Makefile        Build with: make
 ```
@@ -37,23 +38,25 @@ All tools are single-file Python scripts with no dependencies (except `pyserial`
 ```
 toolchain/
   asm.py         Assembler: .asm -> .mpu
-  cc.py          C compiler: .c -> .asm (subset of C)
+  cc.py          C compiler: .c -> .s (subset of C)
   sim.py         Cycle-accurate simulator with optional trace output
-  run.py         Uploads .mpu binaries to the board via UART
-  stdlib.asm     Standard library (printf, putchar, puts, sleep, setleds)
+  flash.py       Uploads .mpu binaries to the board via UART (prompts for S2; --now skips)
+  stdlib.asm     Standard library (printf, putchar, puts, sleep, setleds, gpio_*, i2c_*)
 ```
+
+All toolchain scripts accept an input filename without extension and assume the obvious one (`.c`/`.asm`/`.bas`/`.mpu`). Compiler output uses `.s` (gcc convention) to distinguish from hand-written `.asm`.
 
 ### Quick start
 
 ```bash
 # Assemble and run
 python3 toolchain/asm.py testing/hello.asm
-python3 toolchain/run.py testing/hello.mpu
+python3 toolchain/flash.py testing/hello.mpu
 
 # Compile C, assemble, and run
 python3 toolchain/cc.py testing/printf.c
 python3 toolchain/asm.py testing/printf.asm
-python3 toolchain/run.py testing/printf.mpu
+python3 toolchain/flash.py testing/printf.mpu
 
 # Simulate without hardware
 python3 toolchain/sim.py testing/hello.mpu
@@ -61,6 +64,8 @@ python3 toolchain/sim.py testing/hello.mpu --trace
 ```
 
 ### Build the FPGA bitstream
+
+Install OSS CAD Suite and activate the environment.
 
 ```bash
 cd mpu

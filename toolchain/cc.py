@@ -28,6 +28,7 @@ Calling convention:
 """
 
 import sys
+import os
 import re
 
 # ---------------------------------------------------------------------------
@@ -52,13 +53,18 @@ TOKEN_SPEC = [
     ('GE',       r'>='),
     ('LT',       r'<'),
     ('GT',       r'>'),
+    ('PLUSPLUS', r'\+\+'),
+    ('MINUSMINUS', r'--'),
     ('PLUS',     r'\+'),
     ('MINUS',    r'-'),
     ('STAR',     r'\*'),
+    ('SLASH',    r'/'),
+    ('PERCENT',  r'%'),
     ('AMP',      r'&'),
     ('PIPE',     r'\|'),
     ('CARET',    r'\^'),
     ('BANG',     r'!'),
+    ('TILDE',    r'~'),
     ('ASSIGN',   r'='),
     ('SEMI',     r';'),
     ('COMMA',    r','),
@@ -73,7 +79,8 @@ TOKEN_SPEC = [
 
 TOKEN_RE = re.compile('|'.join(f'(?P<{name}>{pat})' for name, pat in TOKEN_SPEC))
 
-KEYWORDS = {'int', 'char', 'void', 'if', 'else', 'while', 'for', 'return'}
+KEYWORDS = {'int', 'char', 'void', 'if', 'else', 'while', 'for', 'return',
+            'break', 'continue'}
 
 
 class Token:
@@ -156,6 +163,12 @@ class ForStmt:
 class ReturnStmt:
     def __init__(self, expr=None):
         self.expr = expr
+
+class BreakStmt:
+    pass
+
+class ContinueStmt:
+    pass
 
 class ExprStmt:
     def __init__(self, expr):
@@ -306,6 +319,14 @@ class Parser:
             return self.parse_for()
         if pk.kind == 'RETURN':
             return self.parse_return()
+        if pk.kind == 'BREAK':
+            self.advance()
+            self.expect('SEMI')
+            return BreakStmt()
+        if pk.kind == 'CONTINUE':
+            self.advance()
+            self.expect('SEMI')
+            return ContinueStmt()
         if pk.kind == 'LBRACE':
             return self.parse_block()
 
@@ -315,12 +336,17 @@ class Parser:
 
     def parse_local_decl(self):
         type_name = self.parse_type()
-        name = self.expect('IDENT').value
-        init_expr = None
-        if self.match('ASSIGN'):
-            init_expr = self.parse_expr()
+        decls = []
+        while True:
+            name = self.expect('IDENT').value
+            init_expr = None
+            if self.match('ASSIGN'):
+                init_expr = self.parse_expr()
+            decls.append(VarDecl(type_name, name, init_expr))
+            if not self.match('COMMA'):
+                break
         self.expect('SEMI')
-        return VarDecl(type_name, name, init_expr)
+        return decls[0] if len(decls) == 1 else Block(decls)
 
     def parse_if(self):
         self.expect('IF')
@@ -461,8 +487,15 @@ class Parser:
         return left
 
     def parse_mul_expr(self):
-        # No hardware multiply, but parse * for pointer deref in unary
-        return self.parse_unary()
+        # No hardware multiply, but *, /, and % all lower to runtime helpers.
+        left = self.parse_unary()
+        while self.peek().kind in ('STAR', 'SLASH', 'PERCENT'):
+            kind = self.peek().kind
+            helper = {'STAR': '__mul', 'SLASH': '__div', 'PERCENT': '__mod'}[kind]
+            self.advance()
+            right = self.parse_unary()
+            left = FuncCall(helper, [left, right])
+        return left
 
     def parse_unary(self):
         pk = self.peek()
@@ -475,6 +508,11 @@ class Parser:
             self.advance()
             expr = self.parse_unary()
             return UnaryOp('!', expr)
+        if pk.kind == 'TILDE':
+            # ~x  ==>  x ^ -1   (bitwise NOT via XOR with all-ones)
+            self.advance()
+            expr = self.parse_unary()
+            return BinOp('^', expr, NumLit(-1))
         if pk.kind == 'STAR':
             self.advance()
             expr = self.parse_unary()
@@ -488,6 +526,13 @@ class Parser:
     def parse_postfix(self):
         expr = self.parse_primary()
         while True:
+            if self.peek().kind in ('PLUSPLUS', 'MINUSMINUS'):
+                op = '+' if self.peek().kind == 'PLUSPLUS' else '-'
+                self.advance()
+                # Desugar x++ to (x = x + 1). Value semantics match pre-inc,
+                # which is fine for for-loop updates and standalone stmts.
+                expr = Assign(expr, BinOp(op, expr, NumLit(1)))
+                continue
             if self.peek().kind == 'LBRACKET':
                 self.advance()
                 index = self.parse_expr()
@@ -553,7 +598,10 @@ class Parser:
 # ---------------------------------------------------------------------------
 
 # Standard library functions — don't generate code for these, they're in stdlib.asm
-STDLIB_FUNCS = {'putchar', 'puts', 'sleep', 'setleds', 'printf'}
+STDLIB_FUNCS = {'putchar', 'puts', 'sleep', 'setleds', 'printf',
+                'gpio_set_dir', 'gpio_write', 'gpio_read',
+                'i2c_start', 'i2c_stop', 'i2c_write', 'i2c_read',
+                'adc_read'}
 
 
 class CodeGen:
@@ -567,10 +615,17 @@ class CodeGen:
         self.locals = {}        # name -> (type, offset from r6)
         self.param_count = 0
         self.local_offset = 0   # current stack frame size for locals
+        self.loop_stack = []    # stack of (continue_label, break_label)
 
     def new_label(self, hint='L'):
+        # Most internal labels are local to a function (if/while/cmp/...).
+        # Prefix them with '.' so the assembler scopes them — otherwise an
+        # internal label like __endif_2 would clobber the local-label scope
+        # and break later .epilogue references in the same function. String
+        # literal labels live in the data section and must stay global.
         self.label_count += 1
-        return f'__{hint}_{self.label_count}'
+        prefix = '' if hint == 'str' else '.'
+        return f'{prefix}__{hint}_{self.label_count}'
 
     def emit(self, line):
         self.output.append(line)
@@ -765,11 +820,14 @@ class CodeGen:
             self.emit(f'{top_label}:')
             self.gen_expr(node.cond, 1)
             self.emit(f'                beq.32  r1, #0, {end_label}')
+            self.loop_stack.append((top_label, end_label))
             self.gen_stmt(node.body)
+            self.loop_stack.pop()
             self.emit(f'                jmp     {top_label}')
             self.emit(f'{end_label}:')
         elif isinstance(node, ForStmt):
             top_label = self.new_label('for')
+            cont_label = self.new_label('forcont')
             end_label = self.new_label('endfor')
             if node.init:
                 self.gen_stmt(node.init)
@@ -777,11 +835,18 @@ class CodeGen:
             if node.cond:
                 self.gen_expr(node.cond, 1)
                 self.emit(f'                beq.32  r1, #0, {end_label}')
+            self.loop_stack.append((cont_label, end_label))
             self.gen_stmt(node.body)
+            self.loop_stack.pop()
+            self.emit(f'{cont_label}:')
             if node.update:
                 self.gen_expr(node.update, 1)
             self.emit(f'                jmp     {top_label}')
             self.emit(f'{end_label}:')
+        elif isinstance(node, BreakStmt):
+            self.emit(f'                jmp     {self.loop_stack[-1][1]}')
+        elif isinstance(node, ContinueStmt):
+            self.emit(f'                jmp     {self.loop_stack[-1][0]}')
 
     def gen_expr(self, node, dest):
         """Generate code for expression, result in r{dest}."""
@@ -863,47 +928,25 @@ class CodeGen:
                 self.emit(f'{end_label}:')
                 return
 
-            # Optimize: if right side is a small immediate
-            if isinstance(node.right, NumLit) and -0x80000 <= node.right.value <= 0x7FFFF:
-                self.gen_expr(node.left, dest)
-                imm = node.right.value
-                OP_MAP = {'+': 'add', '-': 'sub', '&': 'and', '|': 'or',
+            # Optimize: if right side is a small immediate AND op has an
+            # immediate form, fold into a single ALU-with-imm instruction.
+            IMM_OP_MAP = {'+': 'add', '-': 'sub', '&': 'and', '|': 'or',
                           '^': 'xor', '<<': 'shl', '>>': 'shr'}
-                if op in OP_MAP:
-                    self.emit(f'                {OP_MAP[op]}.32 r{dest}, #{imm}')
-                    return
+            if (op in IMM_OP_MAP
+                    and isinstance(node.right, NumLit)
+                    and -0x80000 <= node.right.value <= 0x7FFFF):
+                self.gen_expr(node.left, dest)
+                self.emit(f'                {IMM_OP_MAP[op]}.32 r{dest}, #{node.right.value}')
+                return
 
             # Comparison ops
             CMP_OPS = {'==': 'beq', '!=': 'bne', '<': 'blt', '>': 'bgt',
                        '<=': 'ble', '>=': 'bge'}
             if op in CMP_OPS:
-                # Generate: compute left-right, then set r{dest} to 0 or 1
+                # Evaluate both sides into registers, then use the branch
+                # instruction's built-in reg-reg compare.
                 true_label = self.new_label('cmp_t')
-                end_label = self.new_label('cmp_e')
-                self.gen_expr(node.left, dest)
                 other = 2 if dest != 2 else 3
-                self.push(dest)
-                self.gen_expr(node.right, other)
-                self.pop(dest)
-                # Compare: subtract and branch
-                self.emit(f'                sub.32  r{dest}, [r0][r{other}]')
-                # Wait, sub r{dest}, [r0][r{other}] reads from memory at r0+r{other}.
-                # We need sub r{dest}, r{other}. But that means mem[r{other}].
-                # We lack reg-reg operations! All ALU ops go through AGU.
-                # sub r1, [r0][r2] = r1 = r1 - mem[0 + r2], not r1 - r2.
-                #
-                # To subtract registers: push right, sub from stack.
-                # Or: use the branch directly. Branch compares rd against cmp_operand.
-                # But branch cmp_operand is only 3-bit immediate or a register.
-                # blt r1, r2, label — this compares r1 against r2! Perfect.
-                self.output.pop()  # remove the broken sub
-                self.pop(dest)  # undo the pop — actually let me redo this
-
-                # Redo: left in dest, right in other
-                # Use branch to set result
-                self.output = self.output[:-1]  # remove the push(dest)
-                self.stack_depth -= 1  # undo push tracking
-
                 self.gen_expr(node.left, dest)
                 self.push(dest)
                 self.gen_expr(node.right, other)
@@ -914,7 +957,6 @@ class CodeGen:
                 self.emit(f'                ld.32   r5, #0')
                 self.emit(f'{true_label}:')
                 if dest != 5:
-                    # Move r5 to dest via stack
                     self.push(5)
                     self.pop(dest)
                 return
@@ -1014,21 +1056,27 @@ class CodeGen:
 
 
 def main():
-    if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <input.c> [output.asm]", file=sys.stderr)
+    args = sys.argv[1:]
+    save_asm = False
+    if '-S' in args:
+        save_asm = True
+        args.remove('-S')
+    if len(args) < 1:
+        print(f"Usage: {sys.argv[0]} [-S] <input.c>", file=sys.stderr)
         sys.exit(1)
 
-    input_file = sys.argv[1]
-    if len(sys.argv) >= 3:
-        output_file = sys.argv[2]
-    else:
-        output_file = input_file.rsplit('.', 1)[0] + '.asm'
+    input_file = args[0]
+    if '.' not in os.path.basename(input_file):
+        input_file += '.c'
 
-    with open(input_file) as f:
-        source = f.read()
+    try:
+        with open(input_file) as f:
+            source = f.read()
+    except FileNotFoundError:
+        print(f"error: input file not found: {input_file}", file=sys.stderr)
+        sys.exit(1)
 
     # Find stdlib.asm next to this script
-    import os
     stdlib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'stdlib.asm')
     if not os.path.exists(stdlib_path):
         stdlib_path = None
@@ -1039,11 +1087,21 @@ def main():
     codegen = CodeGen(stdlib_path=stdlib_path)
     asm = codegen.generate(ast)
 
-    with open(output_file, 'w') as f:
-        f.write(asm)
-        f.write('\n')
+    if save_asm:
+        s_file = input_file.rsplit('.', 1)[0] + '.s'
+        with open(s_file, 'w') as f:
+            f.write(asm)
+            f.write('\n')
+        print(f"Wrote {s_file}")
 
-    print(f"Compiled {input_file} -> {output_file}")
+    # Chain through the assembler in memory.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import asm as _asm
+    binary = _asm.assemble(asm + '\n')
+    mpu_file = input_file.rsplit('.', 1)[0] + '.mpu'
+    with open(mpu_file, 'wb') as f:
+        f.write(binary)
+    print(f"Compiled {input_file} -> {mpu_file} ({len(binary)} bytes)")
 
 
 if __name__ == '__main__':

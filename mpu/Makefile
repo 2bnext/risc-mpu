@@ -3,7 +3,7 @@ PACKAGE = sg48
 PCF = mpu.pcf
 TOP = top
 
-SRCS = top.v mpu.v agu.v mem.v uart_tx.v uart_rx.v bootloader.v
+SRCS = top.v mpu.v agu.v mem.v uart_tx.v uart_rx.v bootloader.v i2c.v adc.v
 
 all: mpu.bin
 

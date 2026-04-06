@@ -8,19 +8,22 @@ module mem (
     input  wire        wr,
     input  wire [31:0] addr,
     input  wire [31:0] wdata,
+    input  wire [3:0]  mask_lo,    // per-nibble write enable for low half
+    input  wire [3:0]  mask_hi,    // per-nibble write enable for high half
     output wire [31:0] rdata,
     output reg         ready
 );
 
-    // Two reads per 32-bit access would complicate things.
-    // Instead: use two SPRAM blocks but with only one 16K address space (32KB).
+    // Two SPRAM blocks in parallel, one address space, 32-bit data.
+    // Byte/halfword stores are realised via per-nibble MASKWREN inputs;
+    // the caller is responsible for shifting wdata into the right lane.
     wire [13:0] spram_addr = addr[15:2];
     wire [15:0] rdata_lo, rdata_hi;
 
     SB_SPRAM256KA spram_lo (
         .ADDRESS    (spram_addr),
         .DATAIN     (wdata[15:0]),
-        .MASKWREN   (4'b1111),
+        .MASKWREN   (mask_lo),
         .WREN       (wr),
         .CHIPSELECT (1'b1),
         .CLOCK      (clk),
@@ -33,7 +36,7 @@ module mem (
     SB_SPRAM256KA spram_hi (
         .ADDRESS    (spram_addr),
         .DATAIN     (wdata[31:16]),
-        .MASKWREN   (4'b1111),
+        .MASKWREN   (mask_hi),
         .WREN       (wr),
         .CHIPSELECT (1'b1),
         .CLOCK      (clk),

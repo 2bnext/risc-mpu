@@ -6,6 +6,7 @@ Usage: sim.py <program.mpu> [--trace] [--max-cycles N]
 """
 
 import sys
+import os
 import struct
 
 # ---- Opcodes ----
@@ -55,6 +56,89 @@ def to_signed32(val):
     return val
 
 
+class FakeBME280:
+    """Minimal BME280 model for the I2C sim. Implements register reads/writes
+    against a sparse register map. Calibration constants and raw ADC values
+    are taken from the BME280 datasheet appendix; the raw ADC samples
+    have been chosen so that the int32 reference compensation in
+    testing/bme280demo.c reproduces the ICAO standard atmosphere at
+    sea level:
+        T = 15 °C, P = 1013.25 hPa, RH = 0 % (dry air)
+    """
+    I2C_ADDR = 0x76
+
+    def __init__(self):
+        self.regs = {}
+        # Chip ID
+        self.regs[0xD0] = 0x60
+        # Status / control / config — power-on defaults
+        self.regs[0xF3] = 0x00
+        self.regs[0xF2] = 0x00
+        self.regs[0xF4] = 0x00
+        self.regs[0xF5] = 0x00
+
+        def put16(addr, value, signed):
+            v = value & 0xFFFF
+            self.regs[addr]     = v & 0xFF
+            self.regs[addr + 1] = (v >> 8) & 0xFF
+
+        # Temperature / pressure calibration at 0x88..0x9F
+        put16(0x88, 27504,  False)   # dig_T1
+        put16(0x8A, 26435,  True)    # dig_T2
+        put16(0x8C, -1000,  True)    # dig_T3
+        put16(0x8E, 36477,  False)   # dig_P1
+        put16(0x90, -10685, True)    # dig_P2
+        put16(0x92, 3024,   True)    # dig_P3
+        put16(0x94, 2855,   True)    # dig_P4
+        put16(0x96, 140,    True)    # dig_P5
+        put16(0x98, -7,     True)    # dig_P6
+        put16(0x9A, 15500,  True)    # dig_P7
+        put16(0x9C, -14600, True)    # dig_P8
+        put16(0x9E, 6000,   True)    # dig_P9
+
+        # Humidity calibration
+        self.regs[0xA1] = 75               # dig_H1
+        put16(0xE1, 341, True)             # dig_H2
+        self.regs[0xE3] = 0                # dig_H3
+        # dig_H4 = 298 (0x12A), dig_H5 = 50 (0x032)
+        self.regs[0xE4] = 0x12             # H4[11:4]
+        self.regs[0xE5] = (0x2 << 4) | 0xA # H5[3:0]<<4 | H4[3:0]
+        self.regs[0xE6] = 0x03             # H5[11:4]
+        self.regs[0xE7] = 30               # dig_H6
+
+        # Raw ADC samples at 0xF7..0xFE. Chosen so the int32 compensation
+        # math in bme280demo.c yields roughly room conditions:
+        #   T ≈ 25 °C, P ≈ 1013 hPa, RH ≈ 50 %
+        self.regs[0xF7] = 0x62; self.regs[0xF8] = 0x30; self.regs[0xF9] = 0x00
+        self.regs[0xFA] = 0x77; self.regs[0xFB] = 0x10; self.regs[0xFC] = 0x00
+        self.regs[0xFD] = 0x00; self.regs[0xFE] = 0x00
+
+        self.reg_ptr = 0
+        self.write_count = 0     # bytes received in this write transaction
+
+    def start_write(self):
+        self.write_count = 0
+
+    def start_read(self):
+        pass
+
+    def write(self, byte):
+        # First byte after addr+W sets the register pointer; subsequent
+        # bytes write to that pointer (auto-incrementing).
+        if self.write_count == 0:
+            self.reg_ptr = byte & 0xFF
+        else:
+            self.regs[self.reg_ptr] = byte & 0xFF
+            self.reg_ptr = (self.reg_ptr + 1) & 0xFF
+        self.write_count += 1
+        return True   # ACK
+
+    def read(self):
+        v = self.regs.get(self.reg_ptr, 0)
+        self.reg_ptr = (self.reg_ptr + 1) & 0xFF
+        return v
+
+
 class MPU:
     def __init__(self, program, trace=False):
         self.mem = bytearray(65536)  # 64KB RAM
@@ -66,6 +150,15 @@ class MPU:
         self.cycles = 0
         self.uart_tx_busy = 0
         self.uart_output = []
+        self.gpio_dir = 0
+        self.gpio_out = 0
+        # I2C bus + attached fake devices
+        self.i2c_devices = {FakeBME280.I2C_ADDR: FakeBME280()}
+        self.i2c_tx = 0          # data register (last write or last read)
+        self.i2c_ack = 1         # 1 = NACK, 0 = ACK
+        self.i2c_started = False
+        self.i2c_slave = None    # currently-addressed device
+        self.i2c_dir_read = False
         self.halted = False
 
     def mem_read(self, addr, size):
@@ -75,6 +168,19 @@ class MPU:
             return self.uart_tx_busy
         if addr == 0xFFFF0000:
             return 0
+        # GPIO: outputs read back their driven value, inputs read 0.
+        if addr == 0xFFFF0010:
+            return self.gpio_out & self.gpio_dir
+        if addr == 0xFFFF0014:
+            return self.gpio_dir
+        if addr == 0xFFFF0018:
+            return self.i2c_tx
+        if addr == 0xFFFF001C:
+            # busy bit always 0 in sim (operations complete instantly)
+            return self.i2c_ack << 1
+        if addr == 0xFFFF0020:
+            # Sigma-delta ADC: simulate ~half-scale (Vin ≈ Vcc/2)
+            return 0x800
         if addr >= 0x10000:
             if self.trace:
                 print(f"  WARNING: read from unmapped address {addr:#010x}")
@@ -103,6 +209,18 @@ class MPU:
                 sys.stdout.write(chr(ch) if ch < 128 else f'\\x{ch:02x}')
                 sys.stdout.flush()
             return
+        if addr == 0xFFFF0010:
+            self.gpio_out = val & 0xFF
+            return
+        if addr == 0xFFFF0014:
+            self.gpio_dir = val & 0xFF
+            return
+        if addr == 0xFFFF0018:
+            self.i2c_tx = val & 0xFF
+            return
+        if addr == 0xFFFF001C:
+            self._i2c_cmd(val & 0x1F)
+            return
         if addr >= 0x10000:
             if self.trace:
                 print(f"  WARNING: write to unmapped address {addr:#010x}")
@@ -113,6 +231,43 @@ class MPU:
             struct.pack_into('<H', self.mem, addr, val & 0xFFFF)
         else:
             struct.pack_into('<I', self.mem, addr, val & MASK32)
+
+    def _i2c_cmd(self, cmd):
+        # Operations are processed in the same order as the hardware FSM:
+        # start → write → read → stop. The sim performs them instantly.
+        if cmd & 0x01:        # START
+            self.i2c_started = True
+            self.i2c_slave = None
+            self.i2c_dir_read = False
+        if cmd & 0x04:        # WRITE byte from data reg
+            if self.i2c_started:
+                addr7 = (self.i2c_tx >> 1) & 0x7F
+                self.i2c_dir_read = bool(self.i2c_tx & 1)
+                self.i2c_slave = self.i2c_devices.get(addr7)
+                self.i2c_started = False
+                if self.i2c_slave is None:
+                    self.i2c_ack = 1
+                else:
+                    self.i2c_ack = 0
+                    if self.i2c_dir_read:
+                        self.i2c_slave.start_read()
+                    else:
+                        self.i2c_slave.start_write()
+            else:
+                if self.i2c_slave is not None and not self.i2c_dir_read:
+                    self.i2c_slave.write(self.i2c_tx)
+                    self.i2c_ack = 0
+                else:
+                    self.i2c_ack = 1
+        if cmd & 0x08:        # READ byte into data reg
+            if self.i2c_slave is not None and self.i2c_dir_read:
+                self.i2c_tx = self.i2c_slave.read()
+            else:
+                self.i2c_tx = 0xFF
+        if cmd & 0x02:        # STOP
+            self.i2c_started = False
+            self.i2c_slave = None
+            self.i2c_dir_read = False
 
     def reg_read(self, r):
         if r == 0:
@@ -349,8 +504,15 @@ def main():
         print(f"Usage: {sys.argv[0]} [--trace] [--max-cycles=N] <program.mpu>", file=sys.stderr)
         sys.exit(1)
 
-    with open(args[0], 'rb') as f:
-        program = f.read()
+    prog_path = args[0]
+    if '.' not in os.path.basename(prog_path):
+        prog_path += '.mpu'
+    try:
+        with open(prog_path, 'rb') as f:
+            program = f.read()
+    except FileNotFoundError:
+        print(f"error: input file not found: {prog_path}", file=sys.stderr)
+        sys.exit(1)
 
     mpu = MPU(program, trace=trace)
     mpu.run(max_cycles)

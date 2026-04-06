@@ -2,6 +2,7 @@
 """Assembler for the MPU ISA. Outputs a binary file."""
 
 import sys
+import os
 import re
 import struct
 
@@ -594,13 +595,23 @@ def main():
         sys.exit(1)
 
     input_file = args[0]
+    if '.' not in os.path.basename(input_file):
+        # Prefer hand-written .asm; fall back to compiler-generated .s.
+        if os.path.exists(input_file + '.asm'):
+            input_file += '.asm'
+        else:
+            input_file += '.s'
     if len(args) >= 2:
         output_file = args[1]
     else:
         output_file = input_file.rsplit('.', 1)[0] + '.mpu'
 
-    with open(input_file) as f:
-        source = f.read()
+    try:
+        with open(input_file) as f:
+            source = f.read()
+    except FileNotFoundError:
+        print(f"error: input file not found: {input_file}", file=sys.stderr)
+        sys.exit(1)
 
     result = assemble(source, listing=show_listing)
 

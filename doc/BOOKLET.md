@@ -303,7 +303,11 @@ This means you don't need to re-synthesize the FPGA to run a different program. 
 | `0x00000000 - 0x0000FFFF` | SPRAM: 64 KB of program and data memory |
 | `0xFFFF0000` | UART TX: write a byte here to send it over serial |
 | `0xFFFF0004` | UART status: bit 0 = busy (read to check if TX is done) |
-| `0xFFFF0008` | LED register: bits [2:0] control blue, red, green |
+| `0xFFFF0008` | LED register: bits [2:0] control green, red, blue |
+| `0xFFFF0010` | GPIO data: 8 bidirectional pins (write to drive outputs, read for live state) |
+| `0xFFFF0014` | GPIO direction: bit `i` = 1 makes `gpio[i]` an output |
+| `0xFFFF0018` | I2C data: write the byte to send, read the last byte received |
+| `0xFFFF001C` | I2C cmd/status: write `[0]start [1]stop [2]write [3]read [4]ack_send`, read `[0]busy [1]ack_recv` |
 
 There is no ROM, no flash, no separate instruction and data memory. Everything is in one flat address space. The program, the stack, the data, and the I/O devices all share the same 32-bit address bus.
 
@@ -431,7 +435,7 @@ Let's walk through this line by line.
 
 ```bash
 python3 toolchain/asm.py hello.asm           # assemble to hello.mpu
-python3 toolchain/run.py hello.mpu           # upload via UART and run
+python3 toolchain/flash.py hello.mpu           # upload via UART and run
 ```
 
 Connect a terminal to the serial port at 115,200 baud and you'll see: `Hello, world!`
@@ -917,14 +921,14 @@ The standard library (linked after the compiled code) provides `printf`, `putcha
 ```
     C source          Assembly            Binary
    printf.c  ------>  printf.asm  ------>  printf.mpu  ------> MPU
-              cc.py                asm.py               run.py
+              cc.py                asm.py               flash.py
 ```
 
 Or write assembly directly:
 
 ```
    hello.asm  ------>  hello.mpu  ------> MPU
-               asm.py              run.py
+               asm.py              flash.py
 ```
 
 You can also use the simulator to test without hardware:
