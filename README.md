@@ -6,7 +6,7 @@ A 32-bit RISC processor with a custom instruction set, built from scratch in Ver
 
 ## Design philosophy
 
-The MPU is a **RISC 68K**: it borrows the parts of the Motorola 68000 that made it pleasant to program — orthogonal addressing, post-increment / pre-decrement, the stack pointer as a real general-purpose register, an operand-rich `move`, label-on-its-own-line aesthetics — and drops the parts that made the 68K hard to build, namely variable-length encoding, a microcoded sequencer, and the data/address register split. What's left is a machine that *feels* like writing 68K assembly but synthesizes to 1000 lines of Verilog and one instruction per 3-5 cycles on a tiny iCE40.
+The MPU is a **RISC 68K**: it borrows the parts of the Motorola 68000 that made it pleasant to program — orthogonal addressing, the stack pointer as a real general-purpose register, an operand-rich `move`, label-on-its-own-line aesthetics — and drops the parts that made the 68K hard to build, namely variable-length encoding, a microcoded sequencer, and the data/address register split. What's left is a machine that *feels* like writing 68K assembly but synthesizes to 1000 lines of Verilog and one instruction per 3-5 cycles on a tiny iCE40.
 
 A few principles guided every design decision:
 
