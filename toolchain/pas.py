@@ -925,14 +925,17 @@ def main():
 
     asm += '\n                end\n'
 
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import asm as _asm
+    asm = _asm.to_pseudo_ops(asm)
+    asm = _asm.hide_r0(asm)
+
     if save_asm:
         s_file = inp.rsplit('.', 1)[0] + '.s'
         with open(s_file, 'w') as f:
             f.write(asm)
         print(f"Wrote {s_file}")
 
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import asm as _asm
     binary = _asm.assemble(asm)
     mpu_file = inp.rsplit('.', 1)[0] + '.mpu'
     with open(mpu_file, 'wb') as f:

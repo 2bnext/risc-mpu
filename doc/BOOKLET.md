@@ -576,22 +576,30 @@ Consider what you get from these four modes:
 
 **Array indexing** (mode 01): `ld.32 r1, [r2][r3]` loads from address r2+r3. If r2 is the base of an array and r3 is an offset, this is array[offset].
 
-**Struct field access** (mode 10): `ld.32 r1, [r2][r0+8]` loads from r2+8. The constant offset 8 selects a specific field within a structure pointed to by r2.
+**Struct field access** (mode 10): `ld.32 r1, [r2+8]` loads from r2+8. The constant offset 8 selects a specific field within a structure pointed to by r2. The full hardware form is `[r2][r0+8]`, but since r0 is hardwired to zero the assembler lets you skip it.
 
-**String/array traversal** (mode 11): `ld.8 r1, [r0][r6+=1]` loads a byte from r6 and increments r6 by 1 after. This is the classic `*ptr++` operation. You can walk through an array without a separate increment instruction.
+**String/array traversal** (mode 11): `ld.8 r1, [r6++]` loads a byte from r6 and increments r6 by 1 after. This is the classic `*ptr++` operation. You can walk through an array without a separate increment instruction.
 
-**Stack push/pop**: `st.32 [r0][sp+=-4], r1` decrements sp by 4 and stores r1. This is `push`. `ld.32 r1, [r0][sp+=4]` loads and increments sp by 4. This is `pop`. No dedicated push/pop instructions needed.
+**Stack push/pop**: the architecture has no dedicated push/pop instructions, but it doesn't need them. `st.32 [sp+=-4], r1` decrements sp by 4 and stores r1 — that's `push r1`. `ld.32 r1, [sp+=4]` loads from sp and increments sp by 4 — that's `pop r1`. Both `push rN` and `pop rN` are also available as assembler pseudo-instructions for readability.
 
 ### Assembler Shorthands
 
-The assembler provides shortcuts for common patterns:
+The architecture has 8 registers, but `r0` is hardwired to zero, so it's never the *value* you want — it's a placeholder for "no base" or "no index" inside the AGU's two-bracket addressing form. The assembler lets you elide it everywhere:
 
-| You Write | It Becomes | Why |
-|---|---|---|
-| `[r3]` | `[r0][r3]` | Base is zero, so address = 0 + r3 = r3 |
-| `[r6++]` | `[r0][r6+=1]` | Post-increment by 1 |
-| `[r6--]` | `[r0][r6+=-1]` | Post-decrement by 1 |
-| `[sp+=-4]` | `[r0][sp+=-4]` | Pre-decrement (used for push) |
+| You write     | Hardware form  | Why                                              |
+|---------------|----------------|--------------------------------------------------|
+| `[r3]`        | `[r0][r3]`     | Base is zero, so address = r3                    |
+| `[sp+8]`      | `[r0][sp+8]`   | No base, indexed with offset (e.g. arg load)     |
+| `[r6++]`      | `[r0][r6+=1]`  | Post-increment by 1                              |
+| `[r6--]`      | `[r0][r6+=-1]` | Post-decrement by 1                              |
+| `[sp+=-4]`    | `[r0][sp+=-4]` | Pre-decrement (used for push)                    |
+| `[sp+=4]`     | `[r0][sp+=4]`  | Post-increment (used for pop)                    |
+| `push rN`     | `sub.32 sp,#4`<br>`st.32 [sp], rN` | Two-instruction pseudo                       |
+| `pop rN`      | `ld.32 rN, [sp+=4]`                | Single-instruction pseudo                    |
+| `mov rD, rS`  | `ld.32 rD, rS`                      | Register-to-register move                    |
+| `jmp target`  | `beq.32 r0, #0, target`             | Unconditional branch (r0 is always 0)        |
+
+The verbose form is still legal — the assembler will accept either — but the shorthand is the convention used everywhere in the toolchain output and the standard library, and it's what you should write by hand.
 
 ---
 

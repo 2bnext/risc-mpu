@@ -96,7 +96,30 @@ Mode 00 is register direct: the operand is the register value itself, no memory 
 
 Mode 11 computes the address before the writeback. The index register is updated after the memory operation completes.
 
-Assembler shorthand: `[Rbase]` expands to `[r0][Rbase]` (mode 01). `[r6++]` expands to `[r0][r6+=1]`, `[sp+=-4]` expands to `[r0][sp+=-4]`.
+### Assembler shorthands (r0 hiding)
+
+`r0` is hardwired to zero, so any AGU operand that uses `r0` as a bookkeeping slot can be written without it. The assembler accepts both forms and produces identical encodings, but the shorthand is the convention used everywhere in the toolchain output, the standard library, and the example code in this document. **Write the shorthand in any new asm.**
+
+| Shorthand     | Hardware form    | Effective address                  | Mode |
+|---------------|------------------|------------------------------------|------|
+| `[Rreg]`      | `[Rreg][r0]`     | `mem[Rreg]`                        | 01   |
+| `[Rreg+off]`  | `[r0][Rreg+off]` | `mem[Rreg + sign_ext(off)]`        | 10   |
+| `[Rreg+=off]` | `[r0][Rreg+=off]`| `mem[Rreg]`, then `Rreg += off`    | 11   |
+| `[Rreg++]`    | `[r0][Rreg+=1]`  | `mem[Rreg]`, then `Rreg += 1`      | 11   |
+| `[Rreg--]`    | `[r0][Rreg+=-1]` | `mem[Rreg]`, then `Rreg -= 1`      | 11   |
+
+Combined with the `push`, `pop`, `mov`, and `jmp` pseudo-instructions, the surface syntax of MPU assembly never needs to mention `r0` at all. A 68K-style function prologue reads:
+
+```asm
+my_func:
+                push    r6                  ; save r6
+                ld.32   r1, [sp+8]          ; load arg from caller's frame
+                ld.8    r2, [r5++]          ; *p++ idiom
+                pop     r6                  ; restore r6
+                ret
+```
+
+Architecturally, every one of those instructions still goes through the AGU with `r0` filling the unused base/index slot — but you never have to type it.
 
 ## Branch Payload Format
 
@@ -182,7 +205,7 @@ ld.8   r2, [r3]             ; r2[7:0] = mem.8[r3], r2[31:8] unchanged
 ld.16  r2, [r3]             ; r2[15:0] = mem.16[r3], r2[31:16] unchanged
 ld.32  r1, [r2][r3]         ; r1 = mem.32[r2 + r3] (indexed, mode 01)
 ld.32  r1, [r2][r3+8]       ; r1 = mem.32[r2 + r3 + 8] (indexed+offset, mode 10)
-ld.32  r1, [r0][r6+=4]      ; r1 = mem.32[r6], then r6 += 4 (post-increment, mode 11)
+ld.32  r1, [r6+=4]      ; r1 = mem.32[r6], then r6 += 4 (post-increment, mode 11)
 ld.8   r2, 0xFFFF0004       ; r2[7:0] = mem.8[0xFFFF0004] (absolute UART status read)
 ld.8   r1, [r6++]           ; r1[7:0] = mem.8[r6], r1[31:8] unchanged, r6 += 1
 ```
@@ -277,10 +300,10 @@ This is the reverse of LD (where rd comes first) because it reads more naturally
 
 ```
 st.8   0xFFFF0000, r1       ; mem.8[0xFFFF0000] = r1 (write byte to UART TX)
-st.32  [r3], r1             ; mem.32[r3] = r1 (shorthand for [r0][r3])
+st.32  [r3], r1             ; mem.32[r3] = r1 (shorthand for [r3])
 st.32  [r2][r3], r1         ; mem.32[r2 + r3] = r1 (indexed)
 st.32  [r2][r3+8], r1       ; mem.32[r2 + r3 + 8] = r1 (indexed+offset)
-st.32  [r0][sp+=-4], r1     ; mem.32[sp] = r1, then sp -= 4 (push)
+st.32  [sp+=-4], r1     ; mem.32[sp] = r1, then sp -= 4 (push)
 st.32  [sp+=-4], r1         ; same as above (shorthand)
 st.8   #0x41, r2            ; mem.8[r2] = 0x41 (store immediate 'A' to addr in r2)
 ```
@@ -332,7 +355,7 @@ add.16 r1, #1               ; r1 = (r1 + 1) & 0xFFFF (16-bit addition)
 add.32 r1, [r2]             ; r1 = r1 + mem.32[r2] (memory indirect)
 add.32 r1, [r2][r3]         ; r1 = r1 + mem.32[r2 + r3] (indexed)
 add.32 r1, [r2][r3+8]       ; r1 = r1 + mem.32[r2 + r3 + 8] (indexed+offset)
-add.32 r1, [r0][r6+=4]      ; r1 = r1 + mem.32[r6], then r6 += 4 (post-increment)
+add.32 r1, [r6+=4]      ; r1 = r1 + mem.32[r6], then r6 += 4 (post-increment)
 add.32 r1, 0x100            ; r1 = r1 + mem.32[0x100] (absolute)
 ```
 
@@ -378,7 +401,7 @@ sub.32 sp, #16              ; sp = sp - 16 (allocate 16 bytes on stack)
 sub.32 r1, [r2]             ; r1 = r1 - mem.32[r2] (memory indirect)
 sub.32 r1, [r2][r3]         ; r1 = r1 - mem.32[r2 + r3] (indexed)
 sub.32 r1, [r2][r3+8]       ; r1 = r1 - mem.32[r2 + r3 + 8] (indexed+offset)
-sub.32 r1, [r0][r6+=4]      ; r1 = r1 - mem.32[r6], then r6 += 4 (post-increment)
+sub.32 r1, [r6+=4]      ; r1 = r1 - mem.32[r6], then r6 += 4 (post-increment)
 sub.32 r1, 0x100            ; r1 = r1 - mem.32[0x100] (absolute)
 ```
 
@@ -637,7 +660,7 @@ and.32 r1, r2               ; r1 = r1 & r2 (register-register)
 and.32 r1, [r2]             ; r1 = r1 & mem.32[r2] (memory indirect)
 and.32 r1, [r2][r3]         ; r1 = r1 & mem.32[r2 + r3] (indexed)
 and.32 r1, [r2][r3+8]       ; r1 = r1 & mem.32[r2 + r3 + 8] (indexed+offset)
-and.32 r1, [r0][r6+=4]      ; r1 = r1 & mem.32[r6], then r6 += 4 (post-increment)
+and.32 r1, [r6+=4]      ; r1 = r1 & mem.32[r6], then r6 += 4 (post-increment)
 and.32 r1, 0x100            ; r1 = r1 & mem.32[0x100] (absolute)
 ```
 
@@ -681,7 +704,7 @@ or.32  r1, r2               ; r1 = r1 | r2 (register-register)
 or.32  r1, [r2]             ; r1 = r1 | mem.32[r2] (memory indirect)
 or.32  r1, [r2][r3]         ; r1 = r1 | mem.32[r2 + r3] (indexed)
 or.32  r1, [r2][r3+8]       ; r1 = r1 | mem.32[r2 + r3 + 8] (indexed+offset)
-or.32  r1, [r0][r6+=4]      ; r1 = r1 | mem.32[r6], then r6 += 4 (post-increment)
+or.32  r1, [r6+=4]      ; r1 = r1 | mem.32[r6], then r6 += 4 (post-increment)
 or.32  r1, 0x100            ; r1 = r1 | mem.32[0x100] (absolute)
 ```
 
@@ -724,7 +747,7 @@ xor.32 r1, r2               ; r1 = r1 ^ r2 (register-register)
 xor.32 r1, [r2]             ; r1 = r1 ^ mem.32[r2] (memory indirect)
 xor.32 r1, [r2][r3]         ; r1 = r1 ^ mem.32[r2 + r3] (indexed)
 xor.32 r1, [r2][r3+8]       ; r1 = r1 ^ mem.32[r2 + r3 + 8] (indexed+offset)
-xor.32 r1, [r0][r6+=4]      ; r1 = r1 ^ mem.32[r6], then r6 += 4 (post-increment)
+xor.32 r1, [r6+=4]      ; r1 = r1 ^ mem.32[r6], then r6 += 4 (post-increment)
 xor.32 r1, 0x100            ; r1 = r1 ^ mem.32[0x100] (absolute)
 ```
 
@@ -762,7 +785,7 @@ shl.32 r1, r2               ; r1 = r1 << r2[4:0] (variable shift)
 shl.32 r1, [r2]             ; r1 = r1 << mem.32[r2][4:0] (memory indirect)
 shl.32 r1, [r2][r3]         ; r1 = r1 << mem.32[r2 + r3][4:0] (indexed)
 shl.32 r1, [r2][r3+8]       ; r1 = r1 << mem.32[r2 + r3 + 8][4:0] (indexed+offset)
-shl.32 r1, [r0][r6+=4]      ; r1 = r1 << mem.32[r6][4:0], then r6 += 4
+shl.32 r1, [r6+=4]      ; r1 = r1 << mem.32[r6][4:0], then r6 += 4
 shl.32 r1, 0x100            ; r1 = r1 << mem.32[0x100][4:0] (absolute)
 ```
 
@@ -800,7 +823,7 @@ shr.32 r1, r2               ; r1 = r1 >> r2[4:0] (variable shift)
 shr.32 r1, [r2]             ; r1 = r1 >> mem.32[r2][4:0] (memory indirect)
 shr.32 r1, [r2][r3]         ; r1 = r1 >> mem.32[r2 + r3][4:0] (indexed)
 shr.32 r1, [r2][r3+8]       ; r1 = r1 >> mem.32[r2 + r3 + 8][4:0] (indexed+offset)
-shr.32 r1, [r0][r6+=4]      ; r1 = r1 >> mem.32[r6][4:0], then r6 += 4
+shr.32 r1, [r6+=4]      ; r1 = r1 >> mem.32[r6][4:0], then r6 += 4
 shr.32 r1, 0x100            ; r1 = r1 >> mem.32[0x100][4:0] (absolute)
 ```
 
@@ -899,24 +922,42 @@ ret                          ; pop return address, jump to it
 
 ## Pseudo-Instructions
 
-| Pseudo       | Expands to               | Description             |
-|--------------|--------------------------|-------------------------|
-| jmp target   | beq r0, #0, target       | Unconditional jump      |
+The assembler accepts a small set of pseudo-instructions that map to one or two native instructions. They are not part of the architecture — the CPU never sees them — but the toolchain output and the standard library use them everywhere, and you should too when writing assembly by hand.
+
+| Pseudo        | Expands to                                 | Description                          |
+|---------------|--------------------------------------------|--------------------------------------|
+| `jmp target`  | `beq.32 r0, #0, target`                    | Unconditional jump (r0 is always 0)  |
+| `mov rD, rS`  | `ld.32 rD, rS`                             | Register-to-register move (mode 00)  |
+| `push rN`     | `sub.32 sp, #4` <br> `st.32 [sp], rN`      | Decrement sp, store rN (two words)   |
+| `pop rN`      | `ld.32 rN, [sp+=4]`                        | Load rN from sp, then increment sp   |
+
+`push` is the only multi-word pseudo — the assembler expands it before pass 1 so labels still resolve correctly. A label may be attached to a `push` line; it points at the first of the two expanded instructions.
 
 ## Stack Operations
 
-No dedicated PUSH/POP. Use AGU writeback mode with sp:
+There are no dedicated PUSH/POP machine instructions; the architecture doesn't need them. The AGU's pre-decrement and post-increment writeback modes turn ordinary loads and stores into stack ops:
 
-```
-st.32 [r0][sp+=-4], r1      ; push r1
-ld.32 r1, [r0][sp+=4]       ; pop r1
+```asm
+st.32   [sp+=-4], r1        ; manual push: sp -= 4 ; mem[sp] = r1
+ld.32   r1, [sp+=4]         ; manual pop:  r1 = mem[sp] ; sp += 4
 ```
 
-Or with shorthand:
+In practice you write the `push` / `pop` pseudo-instructions instead — they encode to exactly the same bytes:
 
+```asm
+push    r1                  ; same encoding as the manual form above
+pop     r1
 ```
-st.32 [sp+=-4], r1          ; push r1
-ld.32 r1, [sp+=4]           ; pop r1
+
+Inside a function prologue, this looks just like 68K-style code:
+
+```asm
+my_func:
+                push    r6                  ; save r6
+                ld.32   r1, [sp+8]          ; load arg from caller's frame
+                ; ... body ...
+                pop     r6                  ; restore r6
+                ret
 ```
 
 ## Assembler Directives
