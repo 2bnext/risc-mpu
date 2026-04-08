@@ -11,7 +11,7 @@ There are microcontroller style peripherals: gpio, i2c, adc and a uart for monit
 ## Architecture
 
 - **32-bit fixed-width instructions** with a uniform encoding: 5-bit opcode, 3-bit register, 2-bit size, and a 20-bit payload
-- **8 registers** (r0 hardwired to zero, r7 aliased as sp (stack pointer))
+- **8 registers** — `r0` is hardwired to zero (the classic RISC trick), `r7` is aliased as `sp` (the stack pointer). The other six are general-purpose. Having `r0 = 0` available everywhere gives you a free zero immediate, an unconditional branch (`jmp target`), a register clear (`clr rD`), and a "no base / no index" placeholder inside every AGU operand — without burning an opcode bit on any of them.
 - **19 instructions**: LD, LDH, ST, ADD, SUB, AND, OR, XOR, SHL, SHR, 6 branches, CALL, RET, NOP
 - **Address Generation Unit (AGU)** shared by 9 instructions, providing register-direct, immediate, absolute, indexed, indexed+offset, and post-increment addressing modes
 - **5-stage state machine**: FETCH, DECODE, EXECUTE, MEM, WB

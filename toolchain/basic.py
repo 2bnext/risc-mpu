@@ -617,14 +617,7 @@ class Compiler:
         k = t[0]
         if k == 'NUM':
             self.advance()
-            val = t[1]
-            if -0x80000 <= val <= 0x7FFFF:
-                self.emit(f'                ld.32   r1, #{val}')
-            else:
-                low = val & 0xFFFFF
-                high = (val >> 12) & 0xFFFFF
-                self.emit(f'                ld.32   r1, #{low}')
-                self.emit(f'                ldh     r1, #{high}')
+            self.emit(f'                ldi     r1, #{t[1]}')
             return 'int'
         if k == 'STR':
             s = self.advance()[1]

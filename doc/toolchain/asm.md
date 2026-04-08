@@ -75,28 +75,42 @@ add.32 r1, #1
 beq.8  r1, #0, .done
 ```
 
-The complete list of native mnemonics: `nop`, `ld`, `ldh`, `st`, `add`, `sub`, `and`, `or`, `xor`, `shl`, `shr`, `beq`, `bne`, `blt`, `bgt`, `ble`, `bge`, `call`, `ret`.
+The complete instruction list — the assembler accepts both real opcodes and a small set of pseudo-instructions that expand to one or two real ones. The pseudos make hand-written code read like a conventional ISA without changing what the CPU executes; they're called out in the table.
 
-### Pseudo-instructions
-
-The assembler also accepts a small set of pseudo-instructions that expand to one or two native instructions. They make hand-written assembly read more like a conventional ISA without changing what the CPU actually executes.
-
-| Pseudo        | Expands to                                       | Notes                                  |
-|---------------|--------------------------------------------------|----------------------------------------|
-| `jmp target`  | `beq.32 r0, #0, target`                          | Unconditional branch (r0 is always 0)  |
-| `mov rD, rS`  | `ld.32 rD, rS`                                   | Register-to-register move              |
-| `push rN`     | `sub.32 sp, #4` then `st.32 [sp], rN`            | Two instructions — advances `sp` by 4  |
-| `pop rN`      | `ld.32 rN, [sp+=4]`                              | Single post-increment load             |
+| Mnemonic     | Kind   | Description                                               |
+|--------------|--------|-----------------------------------------------------------|
+| `nop`        | real   | No operation                                              |
+| `ld`         | real   | Load (register, immediate, memory — uses the AGU)         |
+| `ldh`        | real   | Load high 20 bits (combine with `ld` for 32-bit constants)|
+| `st`         | real   | Store to memory                                           |
+| `add`        | real   | Add operand to `rd`                                       |
+| `sub`        | real   | Subtract operand from `rd`                                |
+| `and`        | real   | Bitwise AND                                               |
+| `or`         | real   | Bitwise OR                                                |
+| `xor`        | real   | Bitwise XOR                                               |
+| `shl`        | real   | Logical shift left                                        |
+| `shr`        | real   | Logical shift right                                       |
+| `beq` / `bne` / `blt` / `bgt` / `ble` / `bge` | real | Conditional branches (compare `rd` against reg or `#imm`) |
+| `call`       | real   | Push return address, jump                                 |
+| `ret`        | real   | Pop return address, jump to it                            |
+| `mov rD, rS` | pseudo | Register-to-register move. Expands to `ld.32 rD, rS`.     |
+| `clr rD`     | pseudo | Clear `rD` to zero. Expands to `ld.32 rD, r0`.            |
+| `ldi rD, #imm` | pseudo | Load any 32-bit constant into `rD`. Expands to a single `ld.32` if the value fits in the 20-bit signed immediate, otherwise an `ld.32` + `ldh` pair. |
+| `jmp target` | pseudo | Unconditional branch. Expands to `beq.32 r0, #0, target`. |
+| `push rN`    | pseudo | Two instructions: `sub.32 sp, #4` then `st.32 [sp], rN`. A label on a `push` line points at the first expanded instruction. |
+| `pop rN`     | pseudo | One instruction: `ld.32 rN, [sp+=4]`.                     |
 
 ```asm
                 push    r6              ; save r6
-                mov     r1, r2          ; r1 = r2
+                clr     r1              ; r1 = 0
+                mov     r2, r3          ; r2 = r3
+                ldi     r3, #0xDEADBEEF ; load any 32-bit constant
                 call    do_thing
                 pop     r6              ; restore r6
                 jmp     done
 ```
 
-A label may be attached to a `push` line: the label points at the first of the two expanded instructions, exactly as you'd expect.
+`push` and `ldi` are the variable-length pseudos: `push` always becomes two instructions, `ldi` becomes one if the value fits in the 20-bit signed immediate (−524288 … 524287) and two otherwise. Both are expanded by `expand_pseudos()` before pass 1, so labels resolve correctly. `ldi` accepts label and expression operands as well as numeric literals; for non-literal operands it conservatively reserves two instruction slots.
 
 ## Operands
 

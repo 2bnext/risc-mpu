@@ -852,14 +852,7 @@ class CodeGen:
         """Generate code for expression, result in r{dest}."""
         if isinstance(node, NumLit):
             val = node.value
-            if -0x80000 <= val <= 0x7FFFF:
-                self.emit(f'                ld.32   r{dest}, #{val}')
-            else:
-                # Need ld + ldh for large values
-                low = val & 0xFFFFF
-                high = (val >> 12) & 0xFFFFF
-                self.emit(f'                ld.32   r{dest}, #{low}')
-                self.emit(f'                ldh     r{dest}, #{high}')
+            self.emit(f'                ldi     r{dest}, #{val}')
 
         elif isinstance(node, CharLit):
             self.emit(f'                ld.32   r{dest}, #{node.value}')

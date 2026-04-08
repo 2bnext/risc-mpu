@@ -324,11 +324,14 @@ There is no ROM, no flash, no separate instruction and data memory. Everything i
 | r1 - r6 | General purpose. Use them for anything. |
 | sp | Stack pointer. Initialized to 0x10000 (top of 64 KB). Grows downward. |
 
-Having r0 hardwired to zero is a classic RISC trick. It gives you a constant you always need without burning an instruction to load it. It also lets you express common operations elegantly:
+Having r0 hardwired to zero is a classic RISC trick — MIPS, SPARC, RISC-V all do it — and it's the single most load-bearing decision in the MPU's design. It gives you a constant you always need without burning an instruction to load it, and it lets you express common operations elegantly:
 
-- `ld.32 r1, r0` clears r1 (move zero into it).
-- `beq.32 r0, #0, target` is an unconditional jump (r0 always equals 0).
-- `[r0][r3]` means "the address in r3" (base of zero plus index).
+- `clr r1` (i.e. `ld.32 r1, r0`) sets r1 to zero.
+- `beq.32 r0, #0, target` is an unconditional jump (r0 always equals 0). The assembler exposes this as `jmp target`.
+- `[r0][r3]` means "the address in r3" (base of zero plus index). The assembler lets you write this as `[r3]`.
+- `[r0][sp+=4]` is "load from sp, then increment sp by 4" — i.e. a stack pop. The assembler lets you write this as `[sp+=4]`, and the `pop r1` pseudo-instruction wraps the whole thing.
+
+The pattern repeats: every time r0 shows up inside a memory operand, it's the bookkeeping slot for "no base" or "no index", and the assembler lets you leave it out of the source code. Architecturally, though, it's still there in every encoded instruction — the AGU always reads two registers, and one of them is `r0` whenever you didn't want a real one. **r0 hiding is a surface-syntax convenience; the hardware never sees it.**
 
 ### The Pipeline
 
@@ -529,11 +532,11 @@ These all use AGU mode 00 (register direct), where the payload encodes a registe
 ### Clearing a Register
 
 ```
-                ld.32   r1, r0           ; r1 = 0 (copy from r0)
+                clr     r1               ; pseudo for ld.32 r1, r0
                 ld.32   r1, #0           ; also works (immediate zero)
 ```
 
-The first form uses the register-direct AGU mode. The second uses the immediate path. Both produce the same result. The register form is one cycle shorter on the pipeline (no memory access needed either way, but it's a stylistic choice).
+The first form is the `clr` pseudo-instruction, which expands to `ld.32 r1, r0` and uses the register-direct AGU mode. The second uses the immediate path. Both produce the same result and run in the same number of cycles, but `clr` is what you should write — it tells the reader exactly what's happening.
 
 ---
 
@@ -596,8 +599,9 @@ The architecture has 8 registers, but `r0` is hardwired to zero, so it's never t
 | `[sp+=4]`     | `[r0][sp+=4]`  | Post-increment (used for pop)                    |
 | `push rN`     | `sub.32 sp,#4`<br>`st.32 [sp], rN` | Two-instruction pseudo                       |
 | `pop rN`      | `ld.32 rN, [sp+=4]`                | Single-instruction pseudo                    |
-| `mov rD, rS`  | `ld.32 rD, rS`                      | Register-to-register move                    |
-| `jmp target`  | `beq.32 r0, #0, target`             | Unconditional branch (r0 is always 0)        |
+| `mov rD, rS`  | `ld.32 rD, rS`                     | Register-to-register move                    |
+| `clr rD`      | `ld.32 rD, r0`                     | Clear `rD` (since r0 is always 0)            |
+| `jmp target`  | `beq.32 r0, #0, target`            | Unconditional branch (r0 is always 0)        |
 
 The verbose form is still legal — the assembler will accept either — but the shorthand is the convention used everywhere in the toolchain output and the standard library, and it's what you should write by hand.
 

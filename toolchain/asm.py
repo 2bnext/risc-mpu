@@ -29,7 +29,7 @@ BRANCH_OPS = {'beq', 'bne', 'blt', 'bgt', 'ble', 'bge'}
 
 # Pseudo-instructions. `push` is expanded by expand_pseudos() into a pair of
 # native instructions; the rest are handled inline in encode_instruction().
-PSEUDO_OPS = {'jmp', 'push', 'pop', 'mov'}
+PSEUDO_OPS = {'jmp', 'push', 'pop', 'mov', 'clr', 'ldi'}
 
 # All known mnemonics (with possible size suffixes) and directives
 ALL_MNEMONICS = set(OPCODES.keys()) | PSEUDO_OPS
@@ -480,7 +480,10 @@ def to_pseudo_ops(asm_text):
         m = _PS_MOV.match(line)
         if m:
             tail = _ps_clean_tail(m.group(4))
-            out.append(_ps_format(m.group(1), f'mov     {m.group(2)}, {m.group(3)}', tail))
+            if m.group(3) == 'r0':
+                out.append(_ps_format(m.group(1), f'clr     {m.group(2)}', tail))
+            else:
+                out.append(_ps_format(m.group(1), f'mov     {m.group(2)}, {m.group(3)}', tail))
             i += 1
             continue
         out.append(line)
@@ -506,10 +509,11 @@ def to_pseudo_ops(asm_text):
 
 
 def expand_pseudos(source):
-    """Expand multi-instruction pseudo-ops to native instructions before
-    the two-pass assembler runs. Currently only `push <reg>` needs this.
-    Single-instruction pseudo-ops (`pop`, `mov`, `jmp`) are encoded directly
-    in encode_instruction()."""
+    """Expand variable-length pseudo-ops to native instructions before the
+    two-pass assembler runs. `push` always expands to two instructions;
+    `ldi` expands to one or two depending on whether the immediate fits in
+    the 20-bit signed payload of LD. Single-instruction pseudo-ops (`pop`,
+    `mov`, `clr`, `jmp`) are encoded directly in encode_instruction()."""
     out = []
     for raw in source.split('\n'):
         code = raw.split(';')[0]
@@ -519,6 +523,7 @@ def expand_pseudos(source):
             continue
         label, rest = strip_label(stripped)
         parts = rest.split(None, 1) if rest else []
+
         if parts and parts[0].lower() == 'push':
             reg = (parts[1] if len(parts) > 1 else '').strip()
             if label:
@@ -526,6 +531,43 @@ def expand_pseudos(source):
             out.append('                sub.32  sp, #4')
             out.append(f'                st.32   [sp], {reg}')
             continue
+
+        if parts and parts[0].lower() == 'ldi':
+            args_str = (parts[1] if len(parts) > 1 else '').strip()
+            m = re.match(r'^(\w+)\s*,\s*#(.+)$', args_str)
+            if m:
+                reg = m.group(1)
+                val_str = m.group(2).strip()
+                # If the value is a literal we can resolve here, decide
+                # whether one ld is enough. Otherwise (label, expression)
+                # always emit ld + ldh — labels in the 64KB code space
+                # would fit in a single ld, but at this stage we don't
+                # know addresses yet, so we conservatively reserve two
+                # instruction slots.
+                emit_pair = True
+                try:
+                    val = parse_int(val_str)
+                    if -0x80000 <= val <= 0x7FFFF:
+                        emit_pair = False
+                except (ValueError, KeyError):
+                    pass
+                if label:
+                    out.append(f'{label}:')
+                if emit_pair:
+                    try:
+                        val = parse_int(val_str)
+                        low = val & 0xFFFFF
+                        high = (val >> 12) & 0xFFFFF
+                        out.append(f'                ld.32   {reg}, #{low}')
+                        out.append(f'                ldh     {reg}, #{high}')
+                    except (ValueError, KeyError):
+                        # Label or expression: pass through to the encoder.
+                        out.append(f'                ld.32   {reg}, #{val_str}')
+                        out.append(f'                ldh     {reg}, #{val_str}')
+                else:
+                    out.append(f'                ld.32   {reg}, #{val}')
+                continue
+
         out.append(raw)
     return '\n'.join(out)
 
@@ -654,6 +696,11 @@ def encode_instruction(line, labels, scope=''):
     # ---- MOV rD, rS — single-instruction pseudo: ld.32 rD, rS ----
     if mnem == 'mov':
         return encode_instruction(f'ld.32   {args}', labels, scope)
+
+    # ---- CLR rD — single-instruction pseudo: ld.32 rD, r0 ----
+    if mnem == 'clr':
+        reg = args.strip()
+        return encode_instruction(f'ld.32   {reg}, r0', labels, scope)
 
     if mnem not in OPCODES:
         raise ValueError(f"Unknown mnemonic: {mnem}")

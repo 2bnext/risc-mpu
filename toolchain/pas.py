@@ -196,13 +196,8 @@ class Compiler:
         self.temp_depth -= 1
 
     def load_imm(self, reg, val):
-        if -0x80000 <= val <= 0x7FFFF:
-            self.emit(f'                ld.32   r{reg}, #{val}')
-        else:
-            low = val & 0xFFFFF
-            high = (val >> 12) & 0xFFFFF
-            self.emit(f'                ld.32   r{reg}, #{low}')
-            self.emit(f'                ldh     r{reg}, #{high}')
+        # Always use the `ldi` pseudo; the assembler picks ld or ld+ldh.
+        self.emit(f'                ldi     r{reg}, #{val}')
 
     def var_addr_load(self, name):
         """Emit code to load variable's value into r1."""
