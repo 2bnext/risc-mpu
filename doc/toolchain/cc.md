@@ -138,7 +138,7 @@ The standard library (`toolchain/stdlib.asm`) is appended to every compiled prog
 | `i2c_read(nack)`               | Shift in one byte; `nack=1` for the last byte before STOP |
 | `adc_read()`                   | Sigma-delta ADC sample at `0xFFFF0020`, 12 bits (0..4095) |
 
-The GPIO/I²C peripherals require external hardware: I²C needs 2.2 kΩ–10 kΩ pull-ups on SCL and SDA, and the GPIO pins are bare iCE40 pads. See [stdlib.md](stdlib.md) for the calling-convention details and the underlying MMIO protocol, and [doc/CLAUDE.md](../CLAUDE.md) for the wiring notes.
+The GPIO/I²C peripherals require external hardware: I²C needs 2.2 kΩ–10 kΩ pull-ups on SCL and SDA, and the GPIO pins are bare iCE40 pads. See [stdlib.md](stdlib.md) for the calling-convention details, the underlying MMIO protocol, and the ADC's external RC network.
 
 A complete I²C example lives at [`testing/bme280demo.c`](../../testing/bme280demo.c).
 

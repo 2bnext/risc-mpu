@@ -165,7 +165,7 @@ i2c_stop();
 printf("chip id = %x\n", id);
 ```
 
-The matching MMIO is described in [doc/CLAUDE.md](../CLAUDE.md): write `0xFFFF0018` to load the byte to send, write `0xFFFF001C` with command bits `[0]=start, [1]=stop, [2]=write, [3]=read, [4]=ack_send`; read `0xFFFF0018` for the last received byte and `0xFFFF001C` for `{ack_recv, busy}`.
+The underlying MMIO protocol is: write `0xFFFF0018` to load the byte to send, write `0xFFFF001C` with command bits `[0]=start, [1]=stop, [2]=write, [3]=read, [4]=ack_send`; read `0xFFFF0018` for the last received byte and `0xFFFF001C` for `{ack_recv, busy}`. The bus needs external 2.2 kΩ–10 kΩ pull-ups on SCL and SDA — the iCE40's internal pull-ups are too weak for reliable I²C.
 
 ### adc_read
 
@@ -181,4 +181,4 @@ int mv = v * 3300 / 4095;                 // approximate millivolts
 printf("V = %d mV\n", mv);
 ```
 
-The ADC is a single-bit sigma-delta loop closed by an external RC network — see [doc/CLAUDE.md](../CLAUDE.md) for the wiring (matched 10 kΩ resistors and a 1–10 nF integrating cap). Without that network the value is meaningless. In the simulator (`toolchain/sim.py`), `adc_read` always returns `0x800` (~ half-scale).
+The ADC is a single-bit sigma-delta loop closed by an external RC charge-balancing network: a 10 kΩ resistor from the `adc_out` pin to a summing node, a matching 10 kΩ resistor from the analog input to the same node, a 1–10 nF capacitor from the node to GND, and the node itself wired to `adc_in`. Without that network the value is meaningless. In the simulator (`toolchain/sim.py`), `adc_read` always returns `0x800` (~ half-scale).

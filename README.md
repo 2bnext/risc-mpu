@@ -20,7 +20,7 @@ A 32-bit RISC processor with a custom instruction set, built from scratch in Ver
 |---|---|---|---|
 | **GPIO** | `0xFFFF0010` (data) / `0xFFFF0014` (direction) | 8 bidirectional pins, per-pin direction control. Outputs read back the driven value, inputs read the live pad state. | None required |
 | **I²C master** | `0xFFFF0018` (data) / `0xFFFF001C` (cmd / status) | ~100 kHz I²C, 7-bit addressing, START / STOP / repeated-start / write / read with controllable ACK. The master blocks the CPU until each transaction completes via a `busy` bit. | 2.2 kΩ–10 kΩ pull-ups on SCL and SDA to 3.3 V |
-| **Sigma-delta ADC** | `0xFFFF0020` | 12-bit single-ended ADC built from a 1-bit feedback loop closed by an external RC network. Conversion runs continuously; reading the register snapshots the latest count. | Two matched 10 kΩ resistors and a 1–10 nF capacitor (charge-balancing network — see [doc/CLAUDE.md](doc/CLAUDE.md)) |
+| **Sigma-delta ADC** | `0xFFFF0020` | 12-bit single-ended ADC built from a 1-bit feedback loop closed by an external RC network. Conversion runs continuously; reading the register snapshots the latest count. | Two matched 10 kΩ resistors and a 1–10 nF capacitor (charge-balancing network) |
 
 The standard library exposes all three as ordinary function calls — `gpio_set_dir`, `gpio_write`, `gpio_read`, `i2c_start`, `i2c_stop`, `i2c_write`, `i2c_read`, and `adc_read` — usable from C, BASIC, and Pascal. A complete worked example using the I²C master against a real BME280 sensor lives at [`testing/bme280demo.c`](testing/bme280demo.c) (and there are line-for-line ports in [`bme280demo.bas`](testing/bme280demo.bas) and [`bme280demo.pas`](testing/bme280demo.pas)).
 
@@ -91,6 +91,7 @@ Requires [Yosys](https://github.com/YosysHQ/yosys), [nextpnr](https://github.com
 ## Documentation
 
 - **[doc/ISA.md](doc/ISA.md)** — Complete instruction set reference with encoding details and pipeline behavior
+- **[doc/PERIPHERALS.md](doc/PERIPHERALS.md)** — Pinout, MMIO, and external-hardware reference for the iCESugar 1.5 (UART, LEDs, GPIO, I²C, ADC)
 - **[doc/BOOKLET.md](doc/BOOKLET.md)** — *Programming the MPU*: a beginner's guide covering CPU history, hexadecimal, FPGAs, and hands-on assembly tutorials
 - **[doc/toolchain/asm.md](doc/toolchain/asm.md)** — Assembler reference (syntax, labels, directives)
 - **[doc/toolchain/cc.md](doc/toolchain/cc.md)** — C compiler reference
