@@ -166,3 +166,19 @@ printf("chip id = %x\n", id);
 ```
 
 The matching MMIO is described in [doc/CLAUDE.md](../CLAUDE.md): write `0xFFFF0018` to load the byte to send, write `0xFFFF001C` with command bits `[0]=start, [1]=stop, [2]=write, [3]=read, [4]=ack_send`; read `0xFFFF0018` for the last received byte and `0xFFFF001C` for `{ack_recv, busy}`.
+
+### adc_read
+
+```c
+int adc_read(void);
+```
+
+Returns the latest sample from the on-chip sigma-delta ADC at `0xFFFF0020`. The result is a 12-bit value in the range `0`–`4095`, where `0` is GND and `4095` is approximately Vcc (3.3 V). The conversion runs continuously in the background — `adc_read` only takes a snapshot of the current count, it does not start a conversion.
+
+```c
+int v = adc_read();                       // 0..4095
+int mv = v * 3300 / 4095;                 // approximate millivolts
+printf("V = %d mV\n", mv);
+```
+
+The ADC is a single-bit sigma-delta loop closed by an external RC network — see [doc/CLAUDE.md](../CLAUDE.md) for the wiring (matched 10 kΩ resistors and a 1–10 nF integrating cap). Without that network the value is meaningless. In the simulator (`toolchain/sim.py`), `adc_read` always returns `0x800` (~ half-scale).

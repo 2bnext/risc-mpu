@@ -118,7 +118,60 @@ POKE addr, value
 
 Stores the low byte of `value` at memory address `addr`. Combined with `PEEK` and `MALLOC`, this lets you build byte buffers in the heap.
 
+### `SLEEP` — busy-wait delay
+
+```basic
+SLEEP 30000        : REM ~10 ms at 12 MHz
+```
+
+The argument is loop iterations, not milliseconds. About 3000 iterations per millisecond on real hardware.
+
+### GPIO statements
+
+```basic
+GPIODIR    0x0F        : REM gpio[0..3] outputs, gpio[4..7] inputs
+GPIOWRITE  0x05        : REM drive gpio[0] and gpio[2] high
+LET V = GPIOREAD()     : REM read all 8 pins (low byte)
+```
+
+`GPIODIR mask` and `GPIOWRITE value` lower to the stdlib `gpio_set_dir` / `gpio_write` calls — see [stdlib.md](stdlib.md) for the underlying register layout. `GPIOREAD()` returns the live state of all 8 GPIO pins as the low 8 bits of an integer.
+
+### `SETLEDS`
+
+```basic
+SETLEDS 7              : REM all colors on (white)
+SETLEDS 3              : REM red + green (yellow)
+SETLEDS 0              : REM off
+```
+
+Drives the on-board RGB LED. Bit 0 = green, bit 1 = red, bit 2 = blue.
+
+### I²C statements
+
+```basic
+I2CSTART
+I2CWRITE 0xEC          : REM 0x76<<1 | W: BME280 address
+I2CWRITE 0xD0          : REM register pointer
+I2CSTART               : REM repeated start
+I2CWRITE 0xED          : REM 0x76<<1 | R
+LET ID = I2CREAD(1)    : REM one byte, NACK to terminate
+I2CSTOP
+PRINT "chip id = "; ID
+```
+
+`I2CSTART`, `I2CSTOP`, `I2CWRITE byte` are statements; `I2CREAD(ack)` is an expression that returns the received byte. Pass `ack=0` to ACK (continue reading) or `ack=1` to NACK (last byte before STOP, as required by the I²C spec). All four lower to the matching stdlib helpers; see [stdlib.md](stdlib.md) for the underlying register protocol and pull-up requirements.
+
 ## Expressions
+
+### Number literals
+
+```basic
+LET A = 42
+LET B = 0xFF        : REM hex literal
+LET C = -1
+```
+
+The compiler emits `ld + ldh` for constants outside the 20-bit immediate range, so values like `1048576` or `0xE000` work just as well as small ones.
 
 ### Operators
 
@@ -126,10 +179,10 @@ Stores the low byte of `value` at memory address `addr`. Combined with `PEEK` an
 |-------------|-------------------------------------------------|
 | Arithmetic  | `+ - * /` (integer)                             |
 | Comparison  | `=  <>  <  >  <=  >=`                           |
-| Logical     | `AND`, `OR` (bitwise on integers)               |
+| Bitwise     | `AND`, `OR`, `<<`, `>>`, `~` / `NOT`            |
 | String ops  | `+` (concatenation), `=`, `<>`                  |
 | Grouping    | `( ... )`                                       |
-| Unary       | `-x`                                            |
+| Unary       | `-x`, `~x`, `NOT x`                             |
 
 `*`, `/`, and string concatenation are runtime helper calls (no hardware multiply or divide).
 
@@ -147,10 +200,14 @@ IF A$ <> B$ THEN PRINT "DIFFERENT"
 
 ### Builtins
 
-| Function    | Returns | Description                                     |
-|-------------|---------|-------------------------------------------------|
-| `MALLOC(n)` | int     | Allocates `n` bytes from the heap, returns ptr  |
-| `PEEK(addr)`| int     | Reads one byte from memory (zero-extended)      |
+| Function       | Returns | Description                                                |
+|----------------|---------|------------------------------------------------------------|
+| `MALLOC(n)`    | int     | Allocates `n` bytes from the heap, returns ptr             |
+| `PEEK(addr)`   | int     | Reads one byte from memory (zero-extended)                 |
+| `SAR(x, n)`    | int     | Arithmetic shift right (signed `x`, the `>>` operator is logical) |
+| `I2CREAD(ack)` | int     | Reads one I²C byte; `ack=0` ACKs, `ack=1` NACKs            |
+| `GPIOREAD()`   | int     | Reads the live GPIO pin state (low 8 bits)                 |
+| `ADCREAD()`    | int     | Reads the on-chip sigma-delta ADC (12-bit, 0..4095)        |
 
 There is no `FREE`. The heap is a bump allocator — once used, memory is gone until the program restarts.
 

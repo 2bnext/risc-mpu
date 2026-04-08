@@ -33,7 +33,8 @@ import sys, os
 KEYWORDS = {'LET', 'PRINT', 'IF', 'THEN', 'GOTO', 'GOSUB', 'RETURN',
             'FOR', 'TO', 'STEP', 'NEXT', 'END', 'REM', 'AND', 'OR', 'NOT',
             'MALLOC', 'PEEK', 'POKE', 'SLEEP',
-            'I2CSTART', 'I2CSTOP', 'I2CWRITE', 'I2CREAD', 'SAR'}
+            'I2CSTART', 'I2CSTOP', 'I2CWRITE', 'I2CREAD', 'SAR',
+            'GPIODIR', 'GPIOWRITE', 'GPIOREAD', 'SETLEDS', 'ADCREAD'}
 
 
 def tokenize(src):
@@ -314,6 +315,27 @@ class Compiler:
                 self.syntax("I2CWRITE argument must be int")
             self.push_r1()
             self.emit(f'                call    i2c_write')
+            self.emit(f'                add.32  sp, #4')
+        elif k == 'GPIODIR':
+            self.advance()
+            if self.gen_expr() != 'int':
+                self.syntax("GPIODIR argument must be int")
+            self.push_r1()
+            self.emit(f'                call    gpio_set_dir')
+            self.emit(f'                add.32  sp, #4')
+        elif k == 'GPIOWRITE':
+            self.advance()
+            if self.gen_expr() != 'int':
+                self.syntax("GPIOWRITE argument must be int")
+            self.push_r1()
+            self.emit(f'                call    gpio_write')
+            self.emit(f'                add.32  sp, #4')
+        elif k == 'SETLEDS':
+            self.advance()
+            if self.gen_expr() != 'int':
+                self.syntax("SETLEDS argument must be int")
+            self.push_r1()
+            self.emit(f'                call    setleds')
             self.emit(f'                add.32  sp, #4')
         else:
             raise SyntaxError(f"Line {t[2]}: unexpected {k}")
@@ -650,6 +672,21 @@ class Compiler:
             self.push_r1()
             self.emit(f'                call    i2c_read')
             self.emit(f'                add.32  sp, #4')
+            return 'int'
+        if k == 'GPIOREAD':
+            self.advance()
+            # Optional empty parens for symmetry.
+            if self.peek()[0] == '(':
+                self.advance()
+                self.expect(')')
+            self.emit(f'                call    gpio_read')
+            return 'int'
+        if k == 'ADCREAD':
+            self.advance()
+            if self.peek()[0] == '(':
+                self.advance()
+                self.expect(')')
+            self.emit(f'                call    adc_read')
             return 'int'
         if k == 'SAR':
             self.advance()

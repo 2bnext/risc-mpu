@@ -308,6 +308,7 @@ This means you don't need to re-synthesize the FPGA to run a different program. 
 | `0xFFFF0014` | GPIO direction: bit `i` = 1 makes `gpio[i]` an output |
 | `0xFFFF0018` | I2C data: write the byte to send, read the last byte received |
 | `0xFFFF001C` | I2C cmd/status: write `[0]start [1]stop [2]write [3]read [4]ack_send`, read `[0]busy [1]ack_recv` |
+| `0xFFFF0020` | ADC: read the latest 12-bit sigma-delta sample (requires an external RC network) |
 
 There is no ROM, no flash, no separate instruction and data memory. Everything is in one flat address space. The program, the stack, the data, and the I/O devices all share the same 32-bit address bus.
 

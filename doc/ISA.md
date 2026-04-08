@@ -24,6 +24,12 @@
 | 0x0000_0000 - 0x0000_FFFF | SPRAM (64KB)                             |
 | 0xFFFF_0000                | UART TX data (write byte)                |
 | 0xFFFF_0004                | UART TX status (read, bit 0 = busy)      |
+| 0xFFFF_0008                | LED register (bits [2:0] = G, R, B)      |
+| 0xFFFF_0010                | GPIO data (8 bidirectional pins)         |
+| 0xFFFF_0014                | GPIO direction (1 = output, 0 = input)   |
+| 0xFFFF_0018                | I²C data (W = tx byte, R = last rx byte) |
+| 0xFFFF_001C                | I²C cmd / status                         |
+| 0xFFFF_0020                | ADC sample (12-bit sigma-delta)          |
 
 ## Instruction Format
 

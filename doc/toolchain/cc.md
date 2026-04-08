@@ -121,6 +121,27 @@ puts(buf);
 
 For pointer arithmetic on words, do it manually with `int *` and explicit offsets.
 
+## Standard library
+
+The standard library (`toolchain/stdlib.asm`) is appended to every compiled program automatically. Notable functions:
+
+| Function                       | Purpose                                                  |
+|--------------------------------|----------------------------------------------------------|
+| `putchar(c)` / `puts(s)` / `printf(...)` | UART output                                    |
+| `setleds(value)`               | RGB LED on `0xFFFF0008` (bit 0 G, 1 R, 2 B)              |
+| `sleep(iters)`                 | Busy-wait (≈ 3000 iterations per ms at 12 MHz)           |
+| `gpio_set_dir(mask)`           | GPIO direction at `0xFFFF0014` (1 = output)              |
+| `gpio_write(value)`            | GPIO output data at `0xFFFF0010`                         |
+| `gpio_read()`                  | Live GPIO pin state, low 8 bits                          |
+| `i2c_start()` / `i2c_stop()`   | I²C START / STOP                                         |
+| `i2c_write(byte)`              | Shift out one byte; returns 0 = ACK, non-zero = NACK     |
+| `i2c_read(nack)`               | Shift in one byte; `nack=1` for the last byte before STOP |
+| `adc_read()`                   | Sigma-delta ADC sample at `0xFFFF0020`, 12 bits (0..4095) |
+
+The GPIO/I²C peripherals require external hardware: I²C needs 2.2 kΩ–10 kΩ pull-ups on SCL and SDA, and the GPIO pins are bare iCE40 pads. See [stdlib.md](stdlib.md) for the calling-convention details and the underlying MMIO protocol, and [doc/CLAUDE.md](../CLAUDE.md) for the wiring notes.
+
+A complete I²C example lives at [`testing/bme280demo.c`](../../testing/bme280demo.c).
+
 ## What is missing
 
 - Floating point, `double`, `short`, `long`, `unsigned`

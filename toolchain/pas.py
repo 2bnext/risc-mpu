@@ -242,14 +242,19 @@ class Compiler:
         # Pre-register built-in routines so calls resolve.
         # (kind, asm_label, num_args_or_None, is_func)
         BUILTINS = {
-            'SLEEP':    ('builtin', 'sleep',     1, False),
-            'I2CSTART': ('builtin', 'i2c_start', 0, False),
-            'I2CSTOP':  ('builtin', 'i2c_stop',  0, False),
-            'I2CWRITE': ('builtin', 'i2c_write', 1, False),
-            'I2CREAD':  ('builtin', 'i2c_read',  1, True),
-            'PEEK':     ('builtin', None,        1, True),  # special
-            'POKE':     ('builtin', None,        2, False), # special
-            'SAR':      ('builtin', None,        2, True),  # special
+            'SLEEP':       ('builtin', 'sleep',        1, False),
+            'I2CSTART':    ('builtin', 'i2c_start',    0, False),
+            'I2CSTOP':     ('builtin', 'i2c_stop',     0, False),
+            'I2CWRITE':    ('builtin', 'i2c_write',    1, False),
+            'I2CREAD':     ('builtin', 'i2c_read',     1, True),
+            'GPIO_SET_DIR':('builtin', 'gpio_set_dir', 1, False),
+            'GPIO_WRITE':  ('builtin', 'gpio_write',   1, False),
+            'GPIO_READ':   ('builtin', 'gpio_read',    0, True),
+            'ADC_READ':    ('builtin', 'adc_read',     0, True),
+            'SETLEDS':     ('builtin', 'setleds',      1, False),
+            'PEEK':        ('builtin', None,           1, True),  # special
+            'POKE':        ('builtin', None,           2, False), # special
+            'SAR':         ('builtin', None,           2, True),  # special
         }
         self.builtins = BUILTINS
 
