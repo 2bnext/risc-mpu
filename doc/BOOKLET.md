@@ -422,7 +422,7 @@ Let's walk through this line by line.
 
 **`jmp .loop`** is the pseudo-instruction for `beq.32 r0, #0, .loop`. Since r0 is always zero and the immediate is zero, the branch is always taken. Unconditional jump.
 
-**`ld.32 r2, 0xFFFF0004`** loads from an absolute address. No `#`, no brackets: the assembler encodes this as reg_value=1, addr_imm=0, meaning the payload is a memory address, not an immediate. The UART status register is read into r2.
+**`ld.8 r2, 0xFFFF0004`** loads a byte from an absolute address. No `#`, no brackets: the assembler encodes this as reg_value=1, addr_imm=0, meaning the payload is a memory address, not an immediate. The UART status register is read into r2. We use `ld.8` rather than `ld.32` because the busy flag lives in bit 0 of a single byte — and matching the load width to the compare width (`bne.8` below) avoids the size-merge gotcha where stale upper bits in r2 from a previous instruction could fool a 32-bit comparison.
 
 **`bne.8 r2, #0, .wait`** loops back if the UART busy flag (bit 0) is nonzero. The `.8` suffix means we only look at the lower byte.
 
@@ -961,4 +961,3 @@ If you want to go further:
 - Write your own programs. Start with blinking the LED. Move to string processing. Try implementing a simple game.
 - Modify the hardware. Add a new instruction. Add a timer. Add a second UART.
 
-The machine is yours. Every bit of it.

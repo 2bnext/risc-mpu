@@ -114,7 +114,7 @@ Immediates are 20-bit sign-extended (range −524288 … 524287). The `ldh` (loa
 A bare label or numeric literal (no `#`, no `[]`) is treated as an absolute address. The CPU loads/stores from/to that address directly.
 
 ```asm
-ld.32 r4, 0xFFFF0004      ; read UART status
+ld.8  r4, 0xFFFF0004      ; read UART status (busy flag)
 st.32 _counter, r1        ; store r1 at the address of _counter
 ```
 

@@ -183,7 +183,7 @@ ld.16  r2, [r3]             ; r2[15:0] = mem.16[r3], r2[31:16] unchanged
 ld.32  r1, [r2][r3]         ; r1 = mem.32[r2 + r3] (indexed, mode 01)
 ld.32  r1, [r2][r3+8]       ; r1 = mem.32[r2 + r3 + 8] (indexed+offset, mode 10)
 ld.32  r1, [r0][r6+=4]      ; r1 = mem.32[r6], then r6 += 4 (post-increment, mode 11)
-ld.32  r2, 0xFFFF0004       ; r2 = mem.32[0xFFFF0004] (absolute, sign-extended address)
+ld.8   r2, 0xFFFF0004       ; r2[7:0] = mem.8[0xFFFF0004] (absolute UART status read)
 ld.8   r1, [r6++]           ; r1[7:0] = mem.8[r6], r1[31:8] unchanged, r6 += 1
 ```
 
@@ -941,7 +941,7 @@ ld.32 r1, [sp+=4]           ; pop r1
 stop:           jmp     stop
 
 output:
-.wait:          ld.32   r2, 0xFFFF0004      ; read UART busy flag
+.wait:          ld.8    r2, 0xFFFF0004      ; read UART busy flag
                 bne.8   r2, #0, .wait       ; loop while busy
                 st.8    0xFFFF0000, r1      ; send byte
                 ret

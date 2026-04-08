@@ -4,7 +4,7 @@
 ; ---- __putc: internal helper. Wait for UART idle, send byte in r1. ----
 ; Clobbers r4 (status read target). Preserves everything else.
 __putc:
-.wait:          ld.32   r4, 0xFFFF0004      ; read UART status (busy flag)
+.wait:          ld.8    r4, 0xFFFF0004      ; read UART status (busy flag)
                 bne.8   r4, #0, .wait       ; loop while busy
                 st.8    0xFFFF0000, r1      ; send byte
                 ret
