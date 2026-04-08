@@ -2,18 +2,11 @@
 
 A 32-bit RISC processor with a custom instruction set, built from scratch in Verilog and running on an iCESugar 1.5 FPGA board (Lattice iCE40UP5K). The entire system — processor, memory, UART, bootloader, assembler, C compiler, and simulator — fits in about 1000 lines of Verilog and 1000 lines of Python.
 
+The ISA has a truly 68K feel, especially with the pseudo opcodes.
+
 **The ISA and initial verilog files are 100% designed and created by me, without a.i.** Claude has at later stage been used for debugging, documentation and the toolchain so I could get my ideas implemented very rapidly.
 
-## Design philosophy
-
-The MPU is a **RISC 68K**: it borrows the parts of the Motorola 68000 that made it pleasant to program — orthogonal addressing, the stack pointer as a real general-purpose register, an operand-rich `move`, label-on-its-own-line aesthetics — and drops the parts that made the 68K hard to build, namely variable-length encoding, a microcoded sequencer, and the data/address register split. What's left is a machine that *feels* like writing 68K assembly but synthesizes to 1000 lines of Verilog and one instruction per 3-5 cycles on a tiny iCE40.
-
-A few principles guided every design decision:
-
-- **Simplicity is a feature, not a limitation.** The whole CPU fits in your head. The Verilog is ~1000 lines, the assembler is one Python file, the ISA fits on one page. You can trace a single `ld.8 r1, [r6++]` from the four bytes in SPRAM, through the decoder.
-- **One operand decoder for everything.** The Address Generation Unit is the design's signature idea: instead of hard-coding addressing modes into individual instructions, every operand-taking instruction routes through a single AGU. Nine instructions get the full set of register-direct, immediate, absolute, indexed, indexed-with-offset, and post-increment modes at zero additional hardware cost per instruction. The AGU is written once, wired to everything, and never duplicated. **All instructions go through the AGU uniformly.**
-- **Fixed-width encoding.** Every instruction is exactly 32 bits. No prefixes, no modes, no length decoding. The fetch logic loads four bytes and is done. This is the single biggest concession to RISC discipline and the single biggest reason the design is small.
-- **A small ISA that's general-purpose enough to host real languages.** 19 instructions is enough for an assembler, a C compiler, a BASIC compiler, *and* a Pascal compiler — all targeting the same `.mpu` binary format.
+There are microcontroller style peripherals: gpio, i2c, adc and a uart for monitoring.
 
 ## Architecture
 
