@@ -75,9 +75,41 @@ add.32 r1, #1
 beq.8  r1, #0, .done
 ```
 
-The complete list of mnemonics: `nop`, `ld`, `ldh`, `st`, `add`, `sub`, `and`, `or`, `xor`, `shl`, `shr`, `beq`, `bne`, `blt`, `bgt`, `ble`, `bge`, `call`, `ret`, plus the pseudo-instruction `jmp`.
+The complete instruction list — the assembler accepts both real opcodes and a small set of pseudo-instructions that expand to one or two real ones. The pseudos make hand-written code read like a conventional ISA without changing what the CPU executes; they're called out in the table.
 
-`jmp target` is a pseudo for an unconditional branch — it expands to `beq.32 r0, #0, target` (since `r0` is hardwired to 0, the comparison is always true).
+| Mnemonic     | Kind   | Description                                               |
+|--------------|--------|-----------------------------------------------------------|
+| `nop`        | real   | No operation                                              |
+| `ld`         | real   | Load (register, immediate, memory — uses the AGU)         |
+| `ldh`        | real   | Load high 20 bits (combine with `ld` for 32-bit constants)|
+| `st`         | real   | Store to memory                                           |
+| `add`        | real   | Add operand to `rd`                                       |
+| `sub`        | real   | Subtract operand from `rd`                                |
+| `and`        | real   | Bitwise AND                                               |
+| `or`         | real   | Bitwise OR                                                |
+| `xor`        | real   | Bitwise XOR                                               |
+| `shl`        | real   | Logical shift left                                        |
+| `shr`        | real   | Logical shift right                                       |
+| `beq` / `bne` / `blt` / `bgt` / `ble` / `bge` | real | Conditional branches (compare `rd` against reg or `#imm`) |
+| `call`       | real   | Push return address, jump                                 |
+| `ret`        | real   | Pop return address, jump to it                            |
+| `clr rD`     | pseudo | Clear `rD` to zero. Expands to `ld.<sz> rD, r0`. Size suffix is honoured (`.8`/`.16` clear only the low byte/halfword and preserve the upper bits — same size-merge behaviour as `ld`). |
+| `ldi rD, #imm` | pseudo | Load any 32-bit constant into `rD`. Expands to a single `ld.32` if the value fits in the 20-bit signed immediate, otherwise an `ld.32` + `ldh` pair. |
+| `jmp target` | pseudo | Unconditional branch. Expands to `beq.32 r0, #0, target`. |
+| `push rN`    | pseudo | Two instructions: `sub.32 sp, #4` then `st.32 [sp], rN`. A label on a `push` line points at the first expanded instruction. |
+| `pop rN`     | pseudo | One instruction: `ld.32 rN, [sp+=4]`.                     |
+
+```asm
+                push    r6              ; save r6
+                clr     r1              ; r1 = 0
+                ld.32   r2, r3          ; r2 = r3 (register-to-register move)
+                ldi     r3, #0xDEADBEEF ; load any 32-bit constant
+                call    do_thing
+                pop     r6              ; restore r6
+                jmp     done
+```
+
+`push` and `ldi` are the variable-length pseudos: `push` always becomes two instructions, `ldi` becomes one if the value fits in the 20-bit signed immediate (−524288 … 524287) and two otherwise. Both are expanded by `expand_pseudos()` before pass 1, so labels resolve correctly. `ldi` accepts label and expression operands as well as numeric literals; for non-literal operands it conservatively reserves two instruction slots.
 
 ## Operands
 
@@ -114,36 +146,38 @@ Immediates are 20-bit sign-extended (range −524288 … 524287). The `ldh` (loa
 A bare label or numeric literal (no `#`, no `[]`) is treated as an absolute address. The CPU loads/stores from/to that address directly.
 
 ```asm
-ld.32 r4, 0xFFFF0004      ; read UART status
+ld.8  r4, 0xFFFF0004      ; read UART status (busy flag)
 st.32 _counter, r1        ; store r1 at the address of _counter
 ```
 
 ### Memory addressing modes
 
-The full form is `[Rbase][Ridx+offset]`. Base, index, and offset are all optional in various combinations:
+The full form is `[Rbase][Ridx+offset]`. Both `Rbase` and `Ridx` can be `r0` (the constant zero) — the assembler accepts a number of shorthands that elide an explicit `r0`, and you should always use the shorthand in human-written code:
 
-| Form                       | Effective address  | Mode | Notes                                |
-|----------------------------|--------------------|------|--------------------------------------|
-| `[Rbase]`                  | `Rbase`            | 01   | Plain indirect                       |
-| `[Rbase][Ridx]`            | `Rbase + Ridx`     | 01   | Indexed                              |
-| `[Rbase][Ridx+off]`        | `Rbase + Ridx+off` | 10   | Indexed with offset (no writeback)   |
-| `[Rbase][Ridx+=off]`       | `Rbase + Ridx`     | 11   | Indexed; writes back `Ridx += off`   |
-| `[Rbase][Ridx++]`          | `Rbase + Ridx`     | 11   | Post-increment by 1 (shorthand)      |
-| `[Rbase][Ridx--]`          | `Rbase + Ridx`     | 11   | Post-decrement by 1 (shorthand)      |
-| `[Rbase+=off]`             | `Rbase`            | 11   | Shorthand for `[r0][Rbase+=off]`     |
-| `[Rbase++]` / `[Rbase--]`  | `Rbase`            | 11   | Shorthand for `[r0][Rbase+=±1]`      |
+| Form                       | Effective address  | Mode | Notes                                  |
+|----------------------------|--------------------|------|----------------------------------------|
+| `[Rbase]`                  | `Rbase`            | 01   | Plain indirect                         |
+| `[Rbase][Ridx]`            | `Rbase + Ridx`     | 01   | Indexed                                |
+| `[Rbase][Ridx+off]`        | `Rbase + Ridx+off` | 10   | Indexed with offset (no writeback)     |
+| `[Rbase][Ridx+=off]`       | `Rbase + Ridx`     | 11   | Indexed; writes back `Ridx += off`     |
+| `[Rbase][Ridx++]`          | `Rbase + Ridx`     | 11   | Post-increment by 1 (shorthand)        |
+| `[Rbase][Ridx--]`          | `Rbase + Ridx`     | 11   | Post-decrement by 1 (shorthand)        |
+| `[Rreg+off]`               | `Rreg + off`       | 10   | Shorthand for `[r0][Rreg+off]`         |
+| `[Rreg+=off]`              | `Rreg`             | 11   | Shorthand for `[r0][Rreg+=off]`        |
+| `[Rreg++]` / `[Rreg--]`    | `Rreg`             | 11   | Shorthand for `[r0][Rreg+=±1]`         |
 
 The offset is 12-bit signed (−2048 … 2047). Writeback updates the index register *after* the access — so `ld.8 r1, [r5++]` reads from `r5` and then increments `r5` by 1.
 
 Idioms you'll see all over the codebase:
 
 ```asm
-sub.32  sp, #4              ; \
-st.32   [sp], r1            ; / push r1
-ld.32   r1, [r0][sp+=4]     ;   pop into r1
-ld.32   r1, [sp][r0+8]      ;   load arg from [sp+8]
-ld.8    r1, [r5++]          ;   read byte and post-increment pointer
+push    r1                  ; sp -= 4 ; mem[sp] = r1
+pop     r1                  ; r1 = mem[sp] ; sp += 4
+ld.32   r1, [sp+8]          ; load argument from [sp+8]
+ld.8    r1, [r5++]          ; read byte and post-increment pointer
 ```
+
+Because `r0` is hardwired to zero, anywhere `r0` would appear inside the brackets you can just leave it out — the assembler inserts it for you. The verbose two-bracket form (e.g. `[r0][sp+=4]`) is still accepted, but the high-level compilers and the standard library no longer emit it.
 
 ## Branches
 
@@ -196,7 +230,7 @@ The most common causes:
 
 - **Unknown label** — usually a typo, a missing definition, or a stale `.s` that was generated before the symbol existed (re-run the compiler).
 - **Invalid literal for int()** — same root cause: a label name appearing where a number was expected, because the label wasn't found in the table.
-- **Cannot parse addressing mode** — usually a stray space or a missing bracket in something like `[r0][sp+=4]`.
+- **Cannot parse addressing mode** — usually a stray space or a missing bracket in something like `[sp+=4]`.
 
 ## Limits
 

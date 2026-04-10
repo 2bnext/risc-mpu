@@ -852,14 +852,7 @@ class CodeGen:
         """Generate code for expression, result in r{dest}."""
         if isinstance(node, NumLit):
             val = node.value
-            if -0x80000 <= val <= 0x7FFFF:
-                self.emit(f'                ld.32   r{dest}, #{val}')
-            else:
-                # Need ld + ldh for large values
-                low = val & 0xFFFFF
-                high = (val >> 12) & 0xFFFFF
-                self.emit(f'                ld.32   r{dest}, #{low}')
-                self.emit(f'                ldh     r{dest}, #{high}')
+            self.emit(f'                ldi     r{dest}, #{val}')
 
         elif isinstance(node, CharLit):
             self.emit(f'                ld.32   r{dest}, #{node.value}')
@@ -1087,6 +1080,11 @@ def main():
     codegen = CodeGen(stdlib_path=stdlib_path)
     asm = codegen.generate(ast)
 
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import asm as _asm
+    asm = _asm.to_pseudo_ops(asm)
+    asm = _asm.hide_r0(asm)
+
     if save_asm:
         s_file = input_file.rsplit('.', 1)[0] + '.s'
         with open(s_file, 'w') as f:
@@ -1094,9 +1092,6 @@ def main():
             f.write('\n')
         print(f"Wrote {s_file}")
 
-    # Chain through the assembler in memory.
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import asm as _asm
     binary = _asm.assemble(asm + '\n')
     mpu_file = input_file.rsplit('.', 1)[0] + '.mpu'
     with open(mpu_file, 'wb') as f:

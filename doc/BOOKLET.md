@@ -308,6 +308,7 @@ This means you don't need to re-synthesize the FPGA to run a different program. 
 | `0xFFFF0014` | GPIO direction: bit `i` = 1 makes `gpio[i]` an output |
 | `0xFFFF0018` | I2C data: write the byte to send, read the last byte received |
 | `0xFFFF001C` | I2C cmd/status: write `[0]start [1]stop [2]write [3]read [4]ack_send`, read `[0]busy [1]ack_recv` |
+| `0xFFFF0020` | ADC: read the latest 12-bit sigma-delta sample (requires an external RC network) |
 
 There is no ROM, no flash, no separate instruction and data memory. Everything is in one flat address space. The program, the stack, the data, and the I/O devices all share the same 32-bit address bus.
 
@@ -323,11 +324,14 @@ There is no ROM, no flash, no separate instruction and data memory. Everything i
 | r1 - r6 | General purpose. Use them for anything. |
 | sp | Stack pointer. Initialized to 0x10000 (top of 64 KB). Grows downward. |
 
-Having r0 hardwired to zero is a classic RISC trick. It gives you a constant you always need without burning an instruction to load it. It also lets you express common operations elegantly:
+Having r0 hardwired to zero is a classic RISC trick — MIPS, SPARC, RISC-V all do it — and it's the single most load-bearing decision in the MPU's design. It gives you a constant you always need without burning an instruction to load it, and it lets you express common operations elegantly:
 
-- `ld.32 r1, r0` clears r1 (move zero into it).
-- `beq.32 r0, #0, target` is an unconditional jump (r0 always equals 0).
-- `[r0][r3]` means "the address in r3" (base of zero plus index).
+- `clr r1` (i.e. `ld.32 r1, r0`) sets r1 to zero.
+- `beq.32 r0, #0, target` is an unconditional jump (r0 always equals 0). The assembler exposes this as `jmp target`.
+- `[r0][r3]` means "the address in r3" (base of zero plus index). The assembler lets you write this as `[r3]`.
+- `[r0][sp+=4]` is "load from sp, then increment sp by 4" — i.e. a stack pop. The assembler lets you write this as `[sp+=4]`, and the `pop r1` pseudo-instruction wraps the whole thing.
+
+The pattern repeats: every time r0 shows up inside a memory operand, it's the bookkeeping slot for "no base" or "no index", and the assembler lets you leave it out of the source code. Architecturally, though, it's still there in every encoded instruction — the AGU always reads two registers, and one of them is `r0` whenever you didn't want a real one. **r0 hiding is a surface-syntax convenience; the hardware never sees it.**
 
 ### The Pipeline
 
@@ -398,7 +402,7 @@ stop:           jmp     stop            ; halt (infinite loop)
 
 ; Subroutine: send byte in r1 to UART
 output:
-.wait:          ld.32   r2, 0xFFFF0004  ; read UART status
+.wait:          ld.8    r2, 0xFFFF0004  ; read UART status
                 bne.8   r2, #0, .wait   ; loop while busy
                 st.8    0xFFFF0000, r1  ; send the byte
                 ret
@@ -421,7 +425,7 @@ Let's walk through this line by line.
 
 **`jmp .loop`** is the pseudo-instruction for `beq.32 r0, #0, .loop`. Since r0 is always zero and the immediate is zero, the branch is always taken. Unconditional jump.
 
-**`ld.32 r2, 0xFFFF0004`** loads from an absolute address. No `#`, no brackets: the assembler encodes this as reg_value=1, addr_imm=0, meaning the payload is a memory address, not an immediate. The UART status register is read into r2.
+**`ld.8 r2, 0xFFFF0004`** loads a byte from an absolute address. No `#`, no brackets: the assembler encodes this as reg_value=1, addr_imm=0, meaning the payload is a memory address, not an immediate. The UART status register is read into r2. We use `ld.8` rather than `ld.32` because the busy flag lives in bit 0 of a single byte — and matching the load width to the compare width (`bne.8` below) avoids the size-merge gotcha where stale upper bits in r2 from a previous instruction could fool a 32-bit comparison.
 
 **`bne.8 r2, #0, .wait`** loops back if the UART busy flag (bit 0) is nonzero. The `.8` suffix means we only look at the lower byte.
 
@@ -528,11 +532,11 @@ These all use AGU mode 00 (register direct), where the payload encodes a registe
 ### Clearing a Register
 
 ```
-                ld.32   r1, r0           ; r1 = 0 (copy from r0)
+                clr     r1               ; pseudo for ld.32 r1, r0
                 ld.32   r1, #0           ; also works (immediate zero)
 ```
 
-The first form uses the register-direct AGU mode. The second uses the immediate path. Both produce the same result. The register form is one cycle shorter on the pipeline (no memory access needed either way, but it's a stylistic choice).
+The first form is the `clr` pseudo-instruction, which expands to `ld.32 r1, r0` and uses the register-direct AGU mode. The second uses the immediate path. Both produce the same result and run in the same number of cycles, but `clr` is what you should write — it tells the reader exactly what's happening.
 
 ---
 
@@ -575,22 +579,30 @@ Consider what you get from these four modes:
 
 **Array indexing** (mode 01): `ld.32 r1, [r2][r3]` loads from address r2+r3. If r2 is the base of an array and r3 is an offset, this is array[offset].
 
-**Struct field access** (mode 10): `ld.32 r1, [r2][r0+8]` loads from r2+8. The constant offset 8 selects a specific field within a structure pointed to by r2.
+**Struct field access** (mode 10): `ld.32 r1, [r2+8]` loads from r2+8. The constant offset 8 selects a specific field within a structure pointed to by r2. The full hardware form is `[r2][r0+8]`, but since r0 is hardwired to zero the assembler lets you skip it.
 
-**String/array traversal** (mode 11): `ld.8 r1, [r0][r6+=1]` loads a byte from r6 and increments r6 by 1 after. This is the classic `*ptr++` operation. You can walk through an array without a separate increment instruction.
+**String/array traversal** (mode 11): `ld.8 r1, [r6++]` loads a byte from r6 and increments r6 by 1 after. This is the classic `*ptr++` operation. You can walk through an array without a separate increment instruction.
 
-**Stack push/pop**: `st.32 [r0][sp+=-4], r1` decrements sp by 4 and stores r1. This is `push`. `ld.32 r1, [r0][sp+=4]` loads and increments sp by 4. This is `pop`. No dedicated push/pop instructions needed.
+**Stack push/pop**: the architecture has no dedicated push/pop instructions, but it doesn't need them. `st.32 [sp+=-4], r1` decrements sp by 4 and stores r1 — that's `push r1`. `ld.32 r1, [sp+=4]` loads from sp and increments sp by 4 — that's `pop r1`. Both `push rN` and `pop rN` are also available as assembler pseudo-instructions for readability.
 
 ### Assembler Shorthands
 
-The assembler provides shortcuts for common patterns:
+The architecture has 8 registers, but `r0` is hardwired to zero, so it's never the *value* you want — it's a placeholder for "no base" or "no index" inside the AGU's two-bracket addressing form. The assembler lets you elide it everywhere:
 
-| You Write | It Becomes | Why |
-|---|---|---|
-| `[r3]` | `[r0][r3]` | Base is zero, so address = 0 + r3 = r3 |
-| `[r6++]` | `[r0][r6+=1]` | Post-increment by 1 |
-| `[r6--]` | `[r0][r6+=-1]` | Post-decrement by 1 |
-| `[sp+=-4]` | `[r0][sp+=-4]` | Pre-decrement (used for push) |
+| You write     | Hardware form  | Why                                              |
+|---------------|----------------|--------------------------------------------------|
+| `[r3]`        | `[r0][r3]`     | Base is zero, so address = r3                    |
+| `[sp+8]`      | `[r0][sp+8]`   | No base, indexed with offset (e.g. arg load)     |
+| `[r6++]`      | `[r0][r6+=1]`  | Post-increment by 1                              |
+| `[r6--]`      | `[r0][r6+=-1]` | Post-decrement by 1                              |
+| `[sp+=-4]`    | `[r0][sp+=-4]` | Pre-decrement (used for push)                    |
+| `[sp+=4]`     | `[r0][sp+=4]`  | Post-increment (used for pop)                    |
+| `push rN`     | `sub.32 sp,#4`<br>`st.32 [sp], rN` | Two-instruction pseudo                       |
+| `pop rN`      | `ld.32 rN, [sp+=4]`                | Single-instruction pseudo                    |
+| `clr rD`      | `ld.32 rD, r0`                     | Clear `rD` (since r0 is always 0)            |
+| `jmp target`  | `beq.32 r0, #0, target`            | Unconditional branch (r0 is always 0)        |
+
+The verbose form is still legal — the assembler will accept either — but the shorthand is the convention used everywhere in the toolchain output and the standard library, and it's what you should write by hand.
 
 ---
 
@@ -628,7 +640,7 @@ Count from 1 to 10, printing each digit:
 .halt:          jmp     .halt            ; done
 
 output:
-.wait:          ld.32   r2, 0xFFFF0004
+.wait:          ld.8    r2, 0xFFFF0004
                 bne.8   r2, #0, .wait
                 st.8    0xFFFF0000, r1
                 ret
@@ -960,4 +972,3 @@ If you want to go further:
 - Write your own programs. Start with blinking the LED. Move to string processing. Try implementing a simple game.
 - Modify the hardware. Add a new instruction. Add a timer. Add a second UART.
 
-The machine is yours. Every bit of it.

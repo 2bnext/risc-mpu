@@ -152,7 +152,12 @@ The Pascal compiler exposes a handful of MPU-specific routines as if they were b
 
 | Builtin                     | Kind       | Description                                          |
 |-----------------------------|------------|------------------------------------------------------|
-| `sleep(ms)`                 | procedure  | Busy-wait the given number of milliseconds          |
+| `sleep(iters)`              | procedure  | Busy-wait loop (≈ 3000 iterations per ms at 12 MHz) |
+| `setleds(value)`            | procedure  | Drive RGB LED: bit 0 G, bit 1 R, bit 2 B             |
+| `gpio_set_dir(mask)`        | procedure  | Set GPIO direction (1 = output, 0 = input)           |
+| `gpio_write(value)`         | procedure  | Drive the 8 GPIO output bits                         |
+| `gpio_read()`                | function   | Read live state of all 8 GPIO pins                   |
+| `adc_read()`                 | function   | Read sigma-delta ADC sample (12-bit, 0..4095)        |
 | `i2cstart`                  | procedure  | Generate I²C START condition                         |
 | `i2cstop`                   | procedure  | Generate I²C STOP condition                          |
 | `i2cwrite(b)`               | procedure  | Shift one byte out                                   |
@@ -160,6 +165,21 @@ The Pascal compiler exposes a handful of MPU-specific routines as if they were b
 | `peek(addr)`                | function   | Read one byte from memory (zero-extended)            |
 | `poke(addr, val)`           | procedure  | Store low byte of `val` at `addr`                    |
 | `sar(x, n)`                 | function   | Arithmetic shift right (signed `x`, `n` ≥ 0)         |
+
+The GPIO and I²C names match the underlying stdlib functions documented in [stdlib.md](stdlib.md), so the underlying register protocol and pull-up requirements are described once there. A typical I²C transaction looks like:
+
+```pascal
+i2cstart;
+i2cwrite($EC);              { 0x76<<1 | W }
+i2cwrite($D0);              { register pointer }
+i2cstart;                   { repeated start }
+i2cwrite($ED);              { 0x76<<1 | R }
+id := i2cread(1);           { one byte, NACK }
+i2cstop;
+writeln('chip id = ', id);
+```
+
+`gpio_read` is a function and must be called with empty parentheses (`gpio_read()`) when used in an expression.
 
 `sar` exists because the MPU's hardware `shr` is logical — for the BME280 reference compensation math (and anything else that uses `>>` on a signed value), you have to fold the high bits in by hand. The compiler emits an inline helper called `__sar` that does this once, and `sar(x, n)` calls it.
 

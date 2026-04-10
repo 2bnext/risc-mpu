@@ -196,13 +196,8 @@ class Compiler:
         self.temp_depth -= 1
 
     def load_imm(self, reg, val):
-        if -0x80000 <= val <= 0x7FFFF:
-            self.emit(f'                ld.32   r{reg}, #{val}')
-        else:
-            low = val & 0xFFFFF
-            high = (val >> 12) & 0xFFFFF
-            self.emit(f'                ld.32   r{reg}, #{low}')
-            self.emit(f'                ldh     r{reg}, #{high}')
+        # Always use the `ldi` pseudo; the assembler picks ld or ld+ldh.
+        self.emit(f'                ldi     r{reg}, #{val}')
 
     def var_addr_load(self, name):
         """Emit code to load variable's value into r1."""
@@ -242,14 +237,19 @@ class Compiler:
         # Pre-register built-in routines so calls resolve.
         # (kind, asm_label, num_args_or_None, is_func)
         BUILTINS = {
-            'SLEEP':    ('builtin', 'sleep',     1, False),
-            'I2CSTART': ('builtin', 'i2c_start', 0, False),
-            'I2CSTOP':  ('builtin', 'i2c_stop',  0, False),
-            'I2CWRITE': ('builtin', 'i2c_write', 1, False),
-            'I2CREAD':  ('builtin', 'i2c_read',  1, True),
-            'PEEK':     ('builtin', None,        1, True),  # special
-            'POKE':     ('builtin', None,        2, False), # special
-            'SAR':      ('builtin', None,        2, True),  # special
+            'SLEEP':       ('builtin', 'sleep',        1, False),
+            'I2CSTART':    ('builtin', 'i2c_start',    0, False),
+            'I2CSTOP':     ('builtin', 'i2c_stop',     0, False),
+            'I2CWRITE':    ('builtin', 'i2c_write',    1, False),
+            'I2CREAD':     ('builtin', 'i2c_read',     1, True),
+            'GPIO_SET_DIR':('builtin', 'gpio_set_dir', 1, False),
+            'GPIO_WRITE':  ('builtin', 'gpio_write',   1, False),
+            'GPIO_READ':   ('builtin', 'gpio_read',    0, True),
+            'ADC_READ':    ('builtin', 'adc_read',     0, True),
+            'SETLEDS':     ('builtin', 'setleds',      1, False),
+            'PEEK':        ('builtin', None,           1, True),  # special
+            'POKE':        ('builtin', None,           2, False), # special
+            'SAR':         ('builtin', None,           2, True),  # special
         }
         self.builtins = BUILTINS
 
@@ -920,14 +920,17 @@ def main():
 
     asm += '\n                end\n'
 
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import asm as _asm
+    asm = _asm.to_pseudo_ops(asm)
+    asm = _asm.hide_r0(asm)
+
     if save_asm:
         s_file = inp.rsplit('.', 1)[0] + '.s'
         with open(s_file, 'w') as f:
             f.write(asm)
         print(f"Wrote {s_file}")
 
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import asm as _asm
     binary = _asm.assemble(asm)
     mpu_file = inp.rsplit('.', 1)[0] + '.mpu'
     with open(mpu_file, 'wb') as f:

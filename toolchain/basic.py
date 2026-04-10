@@ -33,7 +33,8 @@ import sys, os
 KEYWORDS = {'LET', 'PRINT', 'IF', 'THEN', 'GOTO', 'GOSUB', 'RETURN',
             'FOR', 'TO', 'STEP', 'NEXT', 'END', 'REM', 'AND', 'OR', 'NOT',
             'MALLOC', 'PEEK', 'POKE', 'SLEEP',
-            'I2CSTART', 'I2CSTOP', 'I2CWRITE', 'I2CREAD', 'SAR'}
+            'I2CSTART', 'I2CSTOP', 'I2CWRITE', 'I2CREAD', 'SAR',
+            'GPIODIR', 'GPIOWRITE', 'GPIOREAD', 'SETLEDS', 'ADCREAD'}
 
 
 def tokenize(src):
@@ -315,6 +316,27 @@ class Compiler:
             self.push_r1()
             self.emit(f'                call    i2c_write')
             self.emit(f'                add.32  sp, #4')
+        elif k == 'GPIODIR':
+            self.advance()
+            if self.gen_expr() != 'int':
+                self.syntax("GPIODIR argument must be int")
+            self.push_r1()
+            self.emit(f'                call    gpio_set_dir')
+            self.emit(f'                add.32  sp, #4')
+        elif k == 'GPIOWRITE':
+            self.advance()
+            if self.gen_expr() != 'int':
+                self.syntax("GPIOWRITE argument must be int")
+            self.push_r1()
+            self.emit(f'                call    gpio_write')
+            self.emit(f'                add.32  sp, #4')
+        elif k == 'SETLEDS':
+            self.advance()
+            if self.gen_expr() != 'int':
+                self.syntax("SETLEDS argument must be int")
+            self.push_r1()
+            self.emit(f'                call    setleds')
+            self.emit(f'                add.32  sp, #4')
         else:
             raise SyntaxError(f"Line {t[2]}: unexpected {k}")
 
@@ -595,14 +617,7 @@ class Compiler:
         k = t[0]
         if k == 'NUM':
             self.advance()
-            val = t[1]
-            if -0x80000 <= val <= 0x7FFFF:
-                self.emit(f'                ld.32   r1, #{val}')
-            else:
-                low = val & 0xFFFFF
-                high = (val >> 12) & 0xFFFFF
-                self.emit(f'                ld.32   r1, #{low}')
-                self.emit(f'                ldh     r1, #{high}')
+            self.emit(f'                ldi     r1, #{t[1]}')
             return 'int'
         if k == 'STR':
             s = self.advance()[1]
@@ -650,6 +665,21 @@ class Compiler:
             self.push_r1()
             self.emit(f'                call    i2c_read')
             self.emit(f'                add.32  sp, #4')
+            return 'int'
+        if k == 'GPIOREAD':
+            self.advance()
+            # Optional empty parens for symmetry.
+            if self.peek()[0] == '(':
+                self.advance()
+                self.expect(')')
+            self.emit(f'                call    gpio_read')
+            return 'int'
+        if k == 'ADCREAD':
+            self.advance()
+            if self.peek()[0] == '(':
+                self.advance()
+                self.expect(')')
+            self.emit(f'                call    adc_read')
             return 'int'
         if k == 'SAR':
             self.advance()
@@ -703,15 +733,17 @@ def main():
 
     asm += '\n                end\n'
 
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import asm as _asm
+    asm = _asm.to_pseudo_ops(asm)
+    asm = _asm.hide_r0(asm)
+
     if save_asm:
         s_file = inp.rsplit('.', 1)[0] + '.s'
         with open(s_file, 'w') as f:
             f.write(asm)
         print(f"Wrote {s_file}")
 
-    # Chain through the assembler in memory.
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import asm as _asm
     binary = _asm.assemble(asm)
     mpu_file = inp.rsplit('.', 1)[0] + '.mpu'
     with open(mpu_file, 'wb') as f:

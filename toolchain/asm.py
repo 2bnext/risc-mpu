@@ -27,8 +27,9 @@ AGU_OPS = {'ld', 'st', 'add', 'sub', 'and', 'or', 'xor', 'shl', 'shr'}
 # Branch instructions
 BRANCH_OPS = {'beq', 'bne', 'blt', 'bgt', 'ble', 'bge'}
 
-# Pseudo-instructions
-PSEUDO_OPS = {'jmp'}
+# Pseudo-instructions. `push` is expanded by expand_pseudos() into a pair of
+# native instructions; the rest are handled inline in encode_instruction().
+PSEUDO_OPS = {'jmp', 'push', 'pop', 'clr', 'ldi'}
 
 # All known mnemonics (with possible size suffixes) and directives
 ALL_MNEMONICS = set(OPCODES.keys()) | PSEUDO_OPS
@@ -198,11 +199,14 @@ def encode_agu(operand_str, labels, scope=''):
         return 1, 0, mask(val, 20)
 
     # Register modes: [Rbase]...
-    # Shorthand: [Ridx+=off] -> [r0][Ridx+=off], [Ridx++] -> [r0][Ridx+=1]
-    # Detect single bracket with += or ++ inside
+    # r0-implicit shorthands: r0 is the constant zero, so anything that
+    # would otherwise need an explicit `[r0]` base can be elided.
+    #   [Ridx+=off]  -> [r0][Ridx+=off]   (post-increment load/store)
+    #   [Ridx++]     -> [r0][Ridx+=1]
+    #   [Ridx+off]   -> [r0][Ridx+off]    (indexed read with offset)
+    #   [Ridx]       -> already meaningful (mode 01 [Rbase] via r0)
     m_short = re.match(r'^\[(\w+)(\+\+|--|(([+-])=(-?\w+)))\]$', operand)
     if m_short:
-        # Rewrite as [r0][Ridx+=off]
         reg = m_short.group(1)
         if m_short.group(2) == '++':
             operand = f'[r0][{reg}+=1]'
@@ -210,6 +214,11 @@ def encode_agu(operand_str, labels, scope=''):
             operand = f'[r0][{reg}+=-1]'
         else:
             operand = f'[r0][{reg}{m_short.group(3)}]'
+    else:
+        # [Rreg+offset] / [Rreg-offset] (no writeback) -> [r0][Rreg+offset]
+        m_off = re.match(r'^\[(\w+)([+-])(-?\w+)\]$', operand)
+        if m_off and m_off.group(1) in REGS:
+            operand = f'[r0][{m_off.group(1)}{m_off.group(2)}{m_off.group(3)}]'
 
     # Parse full two-bracket form
     m = re.match(r'\[(\w+)\](?:\[(\w+)((\+\+|--)|([+-])=?(-?\w+))?\])?', operand)
@@ -380,8 +389,193 @@ def format_db_listing(addr, data, source_line):
     return f'{addr:04X}: {hex_str:<18s} {"db":<44s} {source_line}'
 
 
+def hide_r0(asm_text):
+    """Strip the bookkeeping `r0` slot from AGU operands so the surface
+    syntax matches what a human would write. Equivalences applied:
+
+        [r0][Ridx+=N]  -> [Ridx+=N]
+        [r0][Ridx++]   -> [Ridx++]
+        [r0][Ridx-=N]  -> [Ridx-=N]
+        [r0][Ridx--]   -> [Ridx--]
+        [Rbase][r0+N]  -> [Rbase+N]
+        [Rbase][r0-N]  -> [Rbase-N]
+        [r0][Rreg+N]   -> [Rreg+N]
+        [r0][Rreg-N]   -> [Rreg-N]
+        [r0][Rreg]     -> [Rreg]
+
+    These are pure surface-syntax rewrites; the assembler accepts both
+    forms and produces identical encodings."""
+    rules = [
+        (re.compile(r'\[r0\]\[(\w+)(\+\+|--|[+-]=-?\w+)\]'), r'[\1\2]'),
+        (re.compile(r'\[(\w+)\]\[r0([+-]\w+)\]'),            r'[\1\2]'),
+        (re.compile(r'\[r0\]\[(\w+)([+-]\w+)\]'),            r'[\1\2]'),
+        (re.compile(r'\[r0\]\[(\w+)\]'),                     r'[\1]'),
+    ]
+    for pat, repl in rules:
+        asm_text = pat.sub(repl, asm_text)
+    return asm_text
+
+
+_PS_REG = r'(?:r[0-7]|sp)'
+_PS_TAIL = r'(\s*(?:;.*)?)$'   # optional trailing whitespace + line comment
+_PS_PUSH_A = re.compile(rf'^(\s*)sub\.32\s+sp,\s*#4{_PS_TAIL}')
+_PS_PUSH_B = re.compile(rf'^\s*st\.32\s+\[sp\],\s*({_PS_REG}){_PS_TAIL}')
+_PS_POP    = re.compile(rf'^(\s*)ld\.32\s+({_PS_REG}),\s*\[r0\]\[sp\+=4\]{_PS_TAIL}')
+_PS_CLR    = re.compile(rf'^(\s*)ld(\.(?:8|16|32))\s+({_PS_REG}),\s*r0{_PS_TAIL}')
+
+
+def _ps_clean_tail(t):
+    """Strip whitespace and discard the decorative `\\` / `/` markers used
+    by the stdlib's stack-pair pretty-printing (`; \\ save r6` /
+    `; / save r6`). Pure decoration with no message becomes empty."""
+    t = t.strip()
+    if not t.startswith(';'):
+        return ''
+    body = t[1:].lstrip()
+    if body.startswith('\\') or body.startswith('/'):
+        body = body[1:].lstrip()
+    if not body:
+        return ''
+    return '; ' + body
+
+
+def _ps_format(indent, body, tail):
+    """Format a pseudo-op line with the original indent and a tail comment
+    aligned to the conventional column 36 (counted from after the indent)."""
+    line = indent + body
+    if tail:
+        body_len = len(line) - len(indent)
+        pad = ' ' * max(1, 36 - body_len)
+        line += pad + tail
+    return line
+
+
+def to_pseudo_ops(asm_text):
+    """Rewrite the compiler-style native sequences `sub sp,#4 / st [sp],rN`,
+    `ld rN, [r0][sp+=4]`, and `ld rD, r0` as their `push` / `pop` / `clr`
+    pseudo-op equivalents. Used by the high-level compilers so the `.s`
+    output (and the asm fed to the assembler) reads naturally. Plain
+    register-to-register `ld.32 rD, rS` is left untouched — it's already
+    the canonical surface form for a register move."""
+    lines = asm_text.split('\n')
+    out = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        m1 = _PS_PUSH_A.match(line)
+        if m1 and i + 1 < n:
+            m2 = _PS_PUSH_B.match(lines[i + 1])
+            if m2:
+                t1 = _ps_clean_tail(m1.group(2))
+                t2 = _ps_clean_tail(m2.group(2))
+                tail = t1 or t2
+                out.append(_ps_format(m1.group(1), f'push    {m2.group(1)}', tail))
+                i += 2
+                continue
+        m = _PS_POP.match(line)
+        if m:
+            tail = _ps_clean_tail(m.group(3))
+            out.append(_ps_format(m.group(1), f'pop     {m.group(2)}', tail))
+            i += 1
+            continue
+        m = _PS_CLR.match(line)
+        if m:
+            tail = _ps_clean_tail(m.group(4))
+            sz = m.group(2)                              # ".8" / ".16" / ".32"
+            sz_suffix = '' if sz == '.32' else sz        # default clr is .32
+            out.append(_ps_format(m.group(1), f'clr{sz_suffix:<4} {m.group(3)}', tail))
+            i += 1
+            continue
+        out.append(line)
+        i += 1
+    # Second pass: clean up the ASCII bracket art (`; \`, `; |`, `; /`) that
+    # the original stdlib used to group multi-line stack-pair sequences. Now
+    # that those sequences have collapsed into single push/pop pseudos, the
+    # orphan markers either become content-free comments (drop them) or have
+    # extra content (drop just the leading marker).
+    cleaned = []
+    for line in out:
+        code, sep, comment = line.partition(';')
+        if sep:
+            body = comment.lstrip()
+            if body in ('/', '|', '\\'):
+                cleaned.append(code.rstrip())
+                continue
+            if body[:2] in ('| ', '/ ', '\\ '):
+                cleaned.append(f'{code.rstrip()}              ; {body[2:]}')
+                continue
+        cleaned.append(line)
+    return '\n'.join(cleaned)
+
+
+def expand_pseudos(source):
+    """Expand variable-length pseudo-ops to native instructions before the
+    two-pass assembler runs. `push` always expands to two instructions;
+    `ldi` expands to one or two depending on whether the immediate fits in
+    the 20-bit signed payload of LD. Single-instruction pseudo-ops (`pop`,
+    `clr`, `jmp`) are encoded directly in encode_instruction()."""
+    out = []
+    for raw in source.split('\n'):
+        code = raw.split(';')[0]
+        stripped = code.strip()
+        if not stripped:
+            out.append(raw)
+            continue
+        label, rest = strip_label(stripped)
+        parts = rest.split(None, 1) if rest else []
+
+        if parts and parts[0].lower() == 'push':
+            reg = (parts[1] if len(parts) > 1 else '').strip()
+            if label:
+                out.append(f'{label}:')
+            out.append('                sub.32  sp, #4')
+            out.append(f'                st.32   [sp], {reg}')
+            continue
+
+        if parts and parts[0].lower() == 'ldi':
+            args_str = (parts[1] if len(parts) > 1 else '').strip()
+            m = re.match(r'^(\w+)\s*,\s*#(.+)$', args_str)
+            if m:
+                reg = m.group(1)
+                val_str = m.group(2).strip()
+                # If the value is a literal we can resolve here, decide
+                # whether one ld is enough. Otherwise (label, expression)
+                # always emit ld + ldh — labels in the 64KB code space
+                # would fit in a single ld, but at this stage we don't
+                # know addresses yet, so we conservatively reserve two
+                # instruction slots.
+                emit_pair = True
+                try:
+                    val = parse_int(val_str)
+                    if -0x80000 <= val <= 0x7FFFF:
+                        emit_pair = False
+                except (ValueError, KeyError):
+                    pass
+                if label:
+                    out.append(f'{label}:')
+                if emit_pair:
+                    try:
+                        val = parse_int(val_str)
+                        low = val & 0xFFFFF
+                        high = (val >> 12) & 0xFFFFF
+                        out.append(f'                ld.32   {reg}, #{low}')
+                        out.append(f'                ldh     {reg}, #{high}')
+                    except (ValueError, KeyError):
+                        # Label or expression: pass through to the encoder.
+                        out.append(f'                ld.32   {reg}, #{val_str}')
+                        out.append(f'                ldh     {reg}, #{val_str}')
+                else:
+                    out.append(f'                ld.32   {reg}, #{val}')
+                continue
+
+        out.append(raw)
+    return '\n'.join(out)
+
+
 def assemble(source, listing=False):
     """Two-pass assembler. Returns bytes, or (bytes, listing_lines) if listing=True."""
+    source = expand_pseudos(source)
     lines = source.split('\n')
 
     # ---- Pass 1: collect labels ----
@@ -494,6 +688,20 @@ def encode_instruction(line, labels, scope=''):
         # rd=r0, reg_or_imm=1, cmp=0, target
         payload = (1 << 19) | (0 << 16) | (target & 0xFFFF)
         return (opcode << 27) | (0 << 24) | (size << 22) | payload
+
+    # ---- POP rN — single-instruction pseudo: ld.32 rN, [sp+=4] ----
+    if mnem == 'pop':
+        reg = args.strip()
+        return encode_instruction(f'ld.32   {reg}, [sp+=4]', labels, scope)
+
+    # ---- CLR rD — single-instruction pseudo: ld.<size> rD, r0 ----
+    # Size suffix is honoured. Default is `.32` (which clears the whole
+    # register); `.8`/`.16` clear only the low byte/halfword and preserve
+    # the upper bits, matching ld's size-merge behaviour.
+    if mnem == 'clr':
+        reg = args.strip()
+        sz_name = SIZE_NAMES[size]
+        return encode_instruction(f'ld{sz_name}   {reg}, r0', labels, scope)
 
     if mnem not in OPCODES:
         raise ValueError(f"Unknown mnemonic: {mnem}")
