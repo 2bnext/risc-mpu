@@ -135,7 +135,7 @@ printf:
                 add.32  r3, #4              ; advance to next arg
                 push    r5                          ; save fmt pointer
                 push    r3                          ; save arg offset
-                mov     r3, r2                      ; r3 = value (register move!)
+                ld.32   r3, r2                      ; r3 = value (register move!)
                 ; Handle negative
                 bge.32  r3, #0, .dpos
                 ld.32   r1, #45             ; '-'
@@ -181,13 +181,13 @@ printf:
                 add.32  r3, #4              ; advance to next arg
                 push    r5                          ; save fmt pointer
                 push    r3                          ; save arg offset
-                mov     r3, r2                      ; r3 = value (register move!)
+                ld.32   r3, r2                      ; r3 = value (register move!)
                 ld.32   r2, #0              ; started flag
                 ld.32   r5, #8              ; nibble count
 .xnib:
                 beq.32  r5, #0, .xdn
                 ; Extract top nibble
-                mov     r1, r3                      ; r1 = value (register move!)
+                ld.32   r1, r3                      ; r1 = value (register move!)
                 shr.32  r1, #28
                 and.32  r1, #15
                 ; Leading zero check
@@ -301,7 +301,7 @@ __mul:
                 ld.32   r3, #0              ; accumulator
 .loop:
                 beq.32  r2, #0, .done
-                mov     r4, r2                      ; test LSB of b
+                ld.32   r4, r2                      ; test LSB of b
                 and.32  r4, #1
                 beq.32  r4, #0, .skip
                 push    r1                          ; acc += a (reg-reg via stack)
@@ -312,7 +312,7 @@ __mul:
                 shr.32  r2, #1
                 jmp     .loop
 .done:
-                mov     r1, r3
+                ld.32   r1, r3
                 ret
 
 ; ---- __div(a, b) / __mod(a, b): unsigned divide and modulo ----
@@ -321,11 +321,11 @@ __mul:
 ; Clobbers r2-r5; no caller-saves needed (caller pushed args).
 __div:
                 call    __divmod
-                mov     r1, r3                      ; quotient
+                ld.32   r1, r3                      ; quotient
                 ret
 __mod:
                 call    __divmod
-                mov     r1, r4                      ; remainder
+                ld.32   r1, r4                      ; remainder
                 ret
 
 ; Internal: returns quotient in r3, remainder in r4.

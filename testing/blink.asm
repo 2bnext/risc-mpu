@@ -6,14 +6,14 @@
 blink:
                     st.8    0xffff0008, r2
 
-                    mov     r1, r4
+                    ld.32   r1, r4
 .wait1:
                     sub     r1, #1
                     bne     r1, #0, .wait1
 
                     st.8    0xffff0008, r3
 
-                    mov     r1, r4
+                    ld.32   r1, r4
 .wait2:
                     sub     r1, #1
                     bne     r1, #0, .wait2

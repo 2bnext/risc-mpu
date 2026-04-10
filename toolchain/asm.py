@@ -29,7 +29,7 @@ BRANCH_OPS = {'beq', 'bne', 'blt', 'bgt', 'ble', 'bge'}
 
 # Pseudo-instructions. `push` is expanded by expand_pseudos() into a pair of
 # native instructions; the rest are handled inline in encode_instruction().
-PSEUDO_OPS = {'jmp', 'push', 'pop', 'mov', 'clr', 'ldi'}
+PSEUDO_OPS = {'jmp', 'push', 'pop', 'clr', 'ldi'}
 
 # All known mnemonics (with possible size suffixes) and directives
 ALL_MNEMONICS = set(OPCODES.keys()) | PSEUDO_OPS
@@ -421,7 +421,7 @@ _PS_TAIL = r'(\s*(?:;.*)?)$'   # optional trailing whitespace + line comment
 _PS_PUSH_A = re.compile(rf'^(\s*)sub\.32\s+sp,\s*#4{_PS_TAIL}')
 _PS_PUSH_B = re.compile(rf'^\s*st\.32\s+\[sp\],\s*({_PS_REG}){_PS_TAIL}')
 _PS_POP    = re.compile(rf'^(\s*)ld\.32\s+({_PS_REG}),\s*\[r0\]\[sp\+=4\]{_PS_TAIL}')
-_PS_MOV    = re.compile(rf'^(\s*)ld\.32\s+({_PS_REG}),\s*({_PS_REG}){_PS_TAIL}')
+_PS_CLR    = re.compile(rf'^(\s*)ld(\.(?:8|16|32))\s+({_PS_REG}),\s*r0{_PS_TAIL}')
 
 
 def _ps_clean_tail(t):
@@ -452,9 +452,11 @@ def _ps_format(indent, body, tail):
 
 def to_pseudo_ops(asm_text):
     """Rewrite the compiler-style native sequences `sub sp,#4 / st [sp],rN`,
-    `ld rN, [r0][sp+=4]`, and `ld rD, rS` as their `push` / `pop` / `mov`
+    `ld rN, [r0][sp+=4]`, and `ld rD, r0` as their `push` / `pop` / `clr`
     pseudo-op equivalents. Used by the high-level compilers so the `.s`
-    output (and the asm fed to the assembler) reads naturally."""
+    output (and the asm fed to the assembler) reads naturally. Plain
+    register-to-register `ld.32 rD, rS` is left untouched — it's already
+    the canonical surface form for a register move."""
     lines = asm_text.split('\n')
     out = []
     i = 0
@@ -477,13 +479,12 @@ def to_pseudo_ops(asm_text):
             out.append(_ps_format(m.group(1), f'pop     {m.group(2)}', tail))
             i += 1
             continue
-        m = _PS_MOV.match(line)
+        m = _PS_CLR.match(line)
         if m:
             tail = _ps_clean_tail(m.group(4))
-            if m.group(3) == 'r0':
-                out.append(_ps_format(m.group(1), f'clr     {m.group(2)}', tail))
-            else:
-                out.append(_ps_format(m.group(1), f'mov     {m.group(2)}, {m.group(3)}', tail))
+            sz = m.group(2)                              # ".8" / ".16" / ".32"
+            sz_suffix = '' if sz == '.32' else sz        # default clr is .32
+            out.append(_ps_format(m.group(1), f'clr{sz_suffix:<4} {m.group(3)}', tail))
             i += 1
             continue
         out.append(line)
@@ -513,7 +514,7 @@ def expand_pseudos(source):
     two-pass assembler runs. `push` always expands to two instructions;
     `ldi` expands to one or two depending on whether the immediate fits in
     the 20-bit signed payload of LD. Single-instruction pseudo-ops (`pop`,
-    `mov`, `clr`, `jmp`) are encoded directly in encode_instruction()."""
+    `clr`, `jmp`) are encoded directly in encode_instruction()."""
     out = []
     for raw in source.split('\n'):
         code = raw.split(';')[0]
@@ -693,14 +694,14 @@ def encode_instruction(line, labels, scope=''):
         reg = args.strip()
         return encode_instruction(f'ld.32   {reg}, [sp+=4]', labels, scope)
 
-    # ---- MOV rD, rS — single-instruction pseudo: ld.32 rD, rS ----
-    if mnem == 'mov':
-        return encode_instruction(f'ld.32   {args}', labels, scope)
-
-    # ---- CLR rD — single-instruction pseudo: ld.32 rD, r0 ----
+    # ---- CLR rD — single-instruction pseudo: ld.<size> rD, r0 ----
+    # Size suffix is honoured. Default is `.32` (which clears the whole
+    # register); `.8`/`.16` clear only the low byte/halfword and preserve
+    # the upper bits, matching ld's size-merge behaviour.
     if mnem == 'clr':
         reg = args.strip()
-        return encode_instruction(f'ld.32   {reg}, r0', labels, scope)
+        sz_name = SIZE_NAMES[size]
+        return encode_instruction(f'ld{sz_name}   {reg}, r0', labels, scope)
 
     if mnem not in OPCODES:
         raise ValueError(f"Unknown mnemonic: {mnem}")

@@ -93,8 +93,7 @@ The complete instruction list — the assembler accepts both real opcodes and a 
 | `beq` / `bne` / `blt` / `bgt` / `ble` / `bge` | real | Conditional branches (compare `rd` against reg or `#imm`) |
 | `call`       | real   | Push return address, jump                                 |
 | `ret`        | real   | Pop return address, jump to it                            |
-| `mov rD, rS` | pseudo | Register-to-register move. Expands to `ld.32 rD, rS`.     |
-| `clr rD`     | pseudo | Clear `rD` to zero. Expands to `ld.32 rD, r0`.            |
+| `clr rD`     | pseudo | Clear `rD` to zero. Expands to `ld.<sz> rD, r0`. Size suffix is honoured (`.8`/`.16` clear only the low byte/halfword and preserve the upper bits — same size-merge behaviour as `ld`). |
 | `ldi rD, #imm` | pseudo | Load any 32-bit constant into `rD`. Expands to a single `ld.32` if the value fits in the 20-bit signed immediate, otherwise an `ld.32` + `ldh` pair. |
 | `jmp target` | pseudo | Unconditional branch. Expands to `beq.32 r0, #0, target`. |
 | `push rN`    | pseudo | Two instructions: `sub.32 sp, #4` then `st.32 [sp], rN`. A label on a `push` line points at the first expanded instruction. |
@@ -103,7 +102,7 @@ The complete instruction list — the assembler accepts both real opcodes and a 
 ```asm
                 push    r6              ; save r6
                 clr     r1              ; r1 = 0
-                mov     r2, r3          ; r2 = r3
+                ld.32   r2, r3          ; r2 = r3 (register-to-register move)
                 ldi     r3, #0xDEADBEEF ; load any 32-bit constant
                 call    do_thing
                 pop     r6              ; restore r6

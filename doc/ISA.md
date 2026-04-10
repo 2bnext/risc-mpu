@@ -120,7 +120,7 @@ Mode 11 computes the address before the writeback. The index register is updated
 | `[Rreg++]`    | `[r0][Rreg+=1]`  | `mem[Rreg]`, then `Rreg += 1`      | 11   |
 | `[Rreg--]`    | `[r0][Rreg+=-1]` | `mem[Rreg]`, then `Rreg -= 1`      | 11   |
 
-Combined with the `push`, `pop`, `mov`, `clr`, and `jmp` pseudo-instructions, the surface syntax of MPU assembly never needs to mention `r0` at all. A 68K-style function prologue reads:
+Combined with the `push`, `pop`, `clr`, and `jmp` pseudo-instructions, the surface syntax of MPU assembly never needs to mention `r0` at all. A 68K-style function prologue reads:
 
 ```asm
 my_func:
@@ -155,7 +155,7 @@ The size suffix affects comparison: `.8` compares lower 8 bits (sign-extended), 
 
 ## Instruction Index
 
-The MPU has 19 native opcodes. The assembler also accepts six pseudo-instructions (`mov`, `clr`, `ldi`, `jmp`, `push`, `pop`) that expand to one or two native instructions; the CPU never sees them, but they're how you should write assembly by hand. Both kinds appear in the alphabetical reference below — the table here groups them by function.
+The MPU has 19 native opcodes. The assembler also accepts five pseudo-instructions (`clr`, `ldi`, `jmp`, `push`, `pop`) that expand to one or two native instructions; the CPU never sees them, but they're how you should write assembly by hand. Both kinds appear in the alphabetical reference below — the table here groups them by function. Note that a register-to-register move is just `ld.32 rD, rS` — AGU mode 00 makes the source register the operand, so `ld` already *is* the move instruction. No dedicated pseudo is needed.
 
 ### Data movement
 
@@ -164,7 +164,6 @@ The MPU has 19 native opcodes. The assembler also accepts six pseudo-instruction
 | `ld`           | 1           | Load (immediate, register, absolute, or memory)          |
 | `ldh`          | 2           | Load high 20 bits (combine with `ld` for 32-bit consts)  |
 | `st`           | 3           | Store rd to memory                                       |
-| `mov rD, rS`   | pseudo      | Register-to-register move (`ld.32 rD, rS`)               |
 | `clr rD`       | pseudo      | Clear rD to zero (`ld.32 rD, r0`)                        |
 | `ldi rD, #imm` | pseudo (×1–2) | Load any 32-bit constant; one `ld.32` if it fits in 20 bits, else `ld.32` + `ldh` |
 | `push rN`      | pseudo (×2) | Decrement sp, store rN                                   |
@@ -584,22 +583,27 @@ call 0x100                   ; push PC+4, jump to address 0x100
 **Expansion:**
 
 ```
-clr rD   →   ld.32 rD, r0
+clr.<sz> rD   →   ld.<sz> rD, r0
 ```
 
-**Encoding:** identical to `ld.32 rD, r0` — a single LD with AGU mode 00, source register `r0`. The CPU sees an ordinary LD instruction.
+The size suffix is honoured. `clr` (no suffix) defaults to `.32` and clears the entire register. `clr.8` and `clr.16` clear only the low byte or halfword and **preserve the upper bits** — the same size-merge behaviour as `ld.8`/`ld.16`. Use `clr.32` (or just `clr`) when you want a full zero.
+
+**Encoding:** identical to `ld.<sz> rD, r0` — a single LD with AGU mode 00, source register `r0`. The CPU sees an ordinary LD instruction.
 
 **Examples:**
 
 ```
-clr r1                       ; r1 = 0
-clr r5                       ; r5 = 0
+clr    r1                    ; r1 = 0  (full 32-bit clear)
+clr.32 r5                    ; same — explicit .32 suffix
+clr.8  r2                    ; r2[7:0] = 0; r2[31:8] unchanged
+clr.16 r3                    ; r3[15:0] = 0; r3[31:16] unchanged
 ```
 
 **Notes:**
 
-- Equivalent in effect to `ld.32 rD, #0`, but reads more clearly as "clear this register" and is one byte shorter to type. Both forms encode to a single instruction and run in the same number of cycles.
-- The high-level compilers' peephole pass also emits `clr` whenever they would otherwise produce `ld.32 rD, r0`.
+- Equivalent in effect to `ld.32 rD, #0`, but reads more clearly as "clear this register". Both forms encode to a single instruction and run in the same number of cycles.
+- The high-level compilers' peephole pass also emits `clr` whenever they would otherwise produce `ld.32 rD, r0`, preserving the original size suffix.
+- For a register-to-register move (non-zero source), just use `ld.32 rD, rS` directly — no pseudo is needed because AGU mode 00 already makes the source register the operand.
 
 ---
 
@@ -766,32 +770,6 @@ ldi    r4, #my_label            ; two instructions (label, conservative)
 
 - Use `ldi` whenever you have a runtime constant that might be larger than 20 bits — the assembler will keep it to a single instruction when possible. Use `ld.32 rD, #N` directly when you know the value is small and want to be explicit about that.
 - The high-level compilers (`cc.py`, `basic.py`, `pas.py`) emit `ldi` for every numeric literal so they don't have to think about the 20-bit limit themselves.
-
----
-
-### MOV (Register Move) — pseudo
-
-**Type:** Pseudo-instruction. The assembler expands it into a single LD with AGU mode 00 (register direct).
-
-**Expansion:**
-
-```
-mov rD, rS   →   ld.32 rD, rS
-```
-
-Copies the full 32-bit value of rS into rD. The CPU sees an ordinary LD.
-
-**Examples:**
-
-```
-mov r1, r2                   ; r1 = r2
-mov r5, sp                   ; r5 = sp
-```
-
-**Notes:**
-
-- Use `clr rD` for the special case of `mov rD, r0` — same encoding, more obvious intent. The toolchain's peephole pass prefers `clr` over `mov rD, r0`.
-- Both `mov rD, rS` and the underlying `ld.32 rD, rS` form are accepted.
 
 ---
 

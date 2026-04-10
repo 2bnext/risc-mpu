@@ -5,7 +5,7 @@
 
 .loop:
                 ; Compute tens digit
-                mov     r1, r3           ; r1 = counter
+                ld.32   r1, r3           ; r1 = counter
                 ld.32   r5, #0           ; tens = 0
 .tens:          blt.32  r1, r6, .units   ; r1 < 10?
                 sub.32  r1, r6
@@ -16,7 +16,7 @@
                 ; r5 = tens digit, r1 = units digit
                 ; Print tens digit (skip if zero and counter < 10)
                 blt.32  r3, r6, .skip_tens
-                mov     r2, r5
+                ld.32   r2, r5
                 add.32  r2, #48          ; ASCII '0'
                 st.8    0xFFFF0000, r2
                 ld.32   r4, #1500
@@ -32,7 +32,7 @@
                 bne.32  r4, #0, .w2
 
                 ; Print newline
-                mov     r1, r6           ; 10 = '\n'
+                ld.32   r1, r6           ; 10 = '\n'
                 st.8    0xFFFF0000, r1
                 ld.32   r4, #1500
 .w3:            sub.32  r4, #1

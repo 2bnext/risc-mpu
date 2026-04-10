@@ -599,7 +599,6 @@ The architecture has 8 registers, but `r0` is hardwired to zero, so it's never t
 | `[sp+=4]`     | `[r0][sp+=4]`  | Post-increment (used for pop)                    |
 | `push rN`     | `sub.32 sp,#4`<br>`st.32 [sp], rN` | Two-instruction pseudo                       |
 | `pop rN`      | `ld.32 rN, [sp+=4]`                | Single-instruction pseudo                    |
-| `mov rD, rS`  | `ld.32 rD, rS`                     | Register-to-register move                    |
 | `clr rD`      | `ld.32 rD, r0`                     | Clear `rD` (since r0 is always 0)            |
 | `jmp target`  | `beq.32 r0, #0, target`            | Unconditional branch (r0 is always 0)        |
 
