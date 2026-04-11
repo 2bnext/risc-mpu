@@ -14,7 +14,20 @@ A handcrafted 32-bit soft-core CPU ("MPU") for the iCESugar 1.5 board (Lattice i
 - A small standard library written in MPU assembly.
 - Documentation in `doc/` aimed at being readable as a booklet, plus per-tool reference pages in `doc/toolchain/`.
 
-The project is tagged **v0.1** as a "finished" milestone — fully working hardware plus four language front-ends (asm/C/BASIC/Pascal) all targeting the same `.mpu` binary format. A successor on the Alchitry Au (Artix-7) is planned for hardware FP, but this repo is the iCESugar version.
+The project is at **v0.2** (v0.1 was the first "finished" milestone — fully working hardware plus four language front-ends all targeting the same `.mpu` binary format). A successor on the Alchitry Au (Artix-7) is planned for hardware FP, but this repo is the iCESugar version.
+
+### What's new since v0.1
+
+- **ISA**: three new opcodes — `asr` (arithmetic shift right), `jmpr` (jump-to-register), `callr` (call-via-register, which gives us real function pointers). Total is now 22 instructions.
+- **Assembler**: pseudo-ops everywhere (`jmp`, `push`, `pop`, `clr`, `ldi`), `r0` hiding in listings, peephole rewriters — MPU assembly reads much more like 68K now.
+- **C compiler**: function pointers (via `callr`), `&funcname` evaluates to a code address, and `>>` defaults to arithmetic shift on signed types (previously always logical — real breakage on `-100 >> 2`).
+- **Stdlib — new geometric/math functions**: `ftan`, `fatan`, `fasin`, `facos`, `fhypot`, `fdeg2rad`, `frad2deg`, `fmin`, `fmax`, `fclamp`, `fsign`, `flerp`, `ffloor`, `fceil`.
+- **Stdlib — fixed two pre-existing critical bugs** that made `fsqrt` and `fatan2` return garbage in every call:
+  - `fsqrt` loaded the `fcmp` comparison result into `r5` instead of the seed, so Newton iteration started from a denormal and saturated to `0x7E7FFFFF`. Fixed by parking the seed in `r5` (callee-saved) before the `fcmp`. The 2-Newton loop was also unrolled to avoid `r4` clobbering by `fdiv`/`fadd`.
+  - `fatan2` clobbered its computed angle with the `fcmp` quadrant-check result — the original author even left a `; return approximate result for now` comment. Fixed by checking the sign of `x` directly on bit 31 instead of calling `fcmp`. The Taylor `z - z³/3` atan polynomial was also replaced with the rational `z / (1 + 0.28125·z²)` which gives ~1% max error on |z|≤1 instead of ~15%.
+- **Verilog**: `uart_tx` grew a 16-byte FIFO so `putchar` bursts don't stall the CPU on every byte. `busy` now means "FIFO full" rather than "shifting", but the existing busy-wait loop still works.
+- **Upload**: `flash.py` sends in small chunks with an inter-chunk delay (`--chunk=N --delay=MS`) because the bootloader has zero timing margin back-to-back at 115200 baud. Default is 8 bytes / 1 ms — slow but reliable for 14 KB+ binaries.
+- **Tests**: [`testing/stdlibtest.c`](../testing/stdlibtest.c) (65 checks covering int math, shifts, type widths, float conversion, ADC, GPIO, I²C, printf specifiers) and [`testing/geomtest.c`](../testing/geomtest.c) (61 checks covering every new geometric function plus `fsqrt`/`fsin`/`fcos`/`fatan2` quadrant coverage). Both suites run in the simulator.
 
 ## Repository layout
 
@@ -79,7 +92,17 @@ C programs put locals on the stack, globals in a data section after code; the he
 
 All instructions are 32-bit. Every memory/ALU operation funnels through the AGU, which produces either an immediate or an effective address. Sub-word loads (`ld.8`, `ld.16`) **size-merge** into the destination register: only the low byte/halfword is overwritten, upper bits are preserved. This bites you if you forget to zero the destination first.
 
-Branches compare an `rd` register against either a 3-bit immediate or another register, in `.8`/`.16`/`.32` widths.
+Branches compare an `rd` register against either a 3-bit immediate or another register, in `.8`/`.16`/`.32` widths. Branch and call targets are both 16-bit absolute addresses.
+
+22 native opcodes total (0-21):
+- 0 NOP, 1 LD, 2 LDH, 3 ST
+- 4 ADD, 5 SUB
+- 6-11 BEQ/BNE/BLT/BGT/BLE/BGE
+- 12 AND, 13 OR, 14 XOR, 15 SHL, 16 SHR
+- 17 CALL, 18 RET
+- **19 ASR (arithmetic shift right, sign-fill)**
+- **20 JMPR (PC = rD)**
+- **21 CALLR (push PC+4, PC = rD — function pointers)**
 
 The full ISA is in [ISA.md](ISA.md).
 

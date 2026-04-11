@@ -14,15 +14,16 @@ OPCODES = {
     'beq':  6,  'bne':  7,  'blt':  8,  'bgt':  9,  'ble': 10, 'bge': 11,
     'and': 12,  'or':  13,  'xor': 14,  'shl': 15,  'shr': 16,
     'call': 17, 'ret': 18,
+    'asr': 19,  'jmpr': 20, 'callr': 21,
 }
 
 SIZES = {'.8': 0, '.16': 1, '.32': 2}
 
-REGS = {f'r{i}': i for i in range(7)}
+REGS = {f'r{i}': i for i in range(8)}
 REGS['sp'] = 7
 
 # Instructions that use the AGU for their operand
-AGU_OPS = {'ld', 'st', 'add', 'sub', 'and', 'or', 'xor', 'shl', 'shr'}
+AGU_OPS = {'ld', 'st', 'add', 'sub', 'and', 'or', 'xor', 'shl', 'shr', 'asr'}
 
 # Branch instructions
 BRANCH_OPS = {'beq', 'bne', 'blt', 'bgt', 'ble', 'bge'}
@@ -352,9 +353,11 @@ def format_listing(addr, word, source_line):
             fields += f' cmp=#{cmp} target={tgt:#06x}'
         else:
             fields += f' cmp=r{cmp} target={tgt:#06x}'
-    elif op_name in ('CALL',):
-        sx = payload if payload < 0x80000 else payload - 0x100000
-        fields += f' target={sx:#x}'
+    elif op_name == 'CALL':
+        tgt = payload & 0xFFFF
+        fields += f' target={tgt:#06x}'
+    elif op_name in ('JMPR', 'CALLR'):
+        fields += f' (PC = r{rd})'
     elif op_name in ('RET', 'NOP'):
         pass
     elif rv:
@@ -545,28 +548,28 @@ def expand_pseudos(source):
                 # would fit in a single ld, but at this stage we don't
                 # know addresses yet, so we conservatively reserve two
                 # instruction slots.
-                emit_pair = True
+                # Decide between one (`ld`) or two (`ld + ldh`) instructions.
+                # For numeric literals: pair if the value doesn't fit 20-bit signed.
+                # For labels (code addresses): always single instruction — code
+                # space is 16 bits and fits comfortably in the 20-bit immediate.
+                emit_pair = False
+                is_literal = False
                 try:
                     val = parse_int(val_str)
-                    if -0x80000 <= val <= 0x7FFFF:
-                        emit_pair = False
+                    is_literal = True
+                    if not (-0x80000 <= val <= 0x7FFFF):
+                        emit_pair = True
                 except (ValueError, KeyError):
                     pass
                 if label:
                     out.append(f'{label}:')
                 if emit_pair:
-                    try:
-                        val = parse_int(val_str)
-                        low = val & 0xFFFFF
-                        high = (val >> 12) & 0xFFFFF
-                        out.append(f'                ld.32   {reg}, #{low}')
-                        out.append(f'                ldh     {reg}, #{high}')
-                    except (ValueError, KeyError):
-                        # Label or expression: pass through to the encoder.
-                        out.append(f'                ld.32   {reg}, #{val_str}')
-                        out.append(f'                ldh     {reg}, #{val_str}')
+                    low = val & 0xFFFFF
+                    high = (val >> 12) & 0xFFFFF
+                    out.append(f'                ld.32   {reg}, #{low}')
+                    out.append(f'                ldh     {reg}, #{high}')
                 else:
-                    out.append(f'                ld.32   {reg}, #{val}')
+                    out.append(f'                ld.32   {reg}, #{val_str}')
                 continue
 
         out.append(raw)
@@ -716,11 +719,29 @@ def encode_instruction(line, labels, scope=''):
         return opcode << 27
 
     # ---- CALL ----
+    # Target is a 16-bit absolute address (matches branch target width).
+    # The full 64KB code space fits in 16 bits.
     if mnem == 'call':
         target_str = args.strip()
         target = resolve_label_or_int(target_str, labels, scope)
-        payload = mask(target, 20)
-        return (opcode << 27) | payload
+        if target < 0 or target > 0xFFFF:
+            raise ValueError(f"CALL target out of 16-bit range: {target:#x}")
+        return (opcode << 27) | (target & 0xFFFF)
+
+    # ---- JMPR rD: indirect jump via register ----
+    # rd field holds the source register; payload is unused.
+    if mnem == 'jmpr':
+        reg_str = args.strip()
+        if reg_str not in REGS:
+            raise ValueError(f"Unknown register: {reg_str}")
+        return (opcode << 27) | (REGS[reg_str] << 24)
+
+    # ---- CALLR rD: indirect call via register ----
+    if mnem == 'callr':
+        reg_str = args.strip()
+        if reg_str not in REGS:
+            raise ValueError(f"Unknown register: {reg_str}")
+        return (opcode << 27) | (REGS[reg_str] << 24)
 
     # ---- LDH ----
     if mnem == 'ldh':

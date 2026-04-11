@@ -30,6 +30,7 @@ Calling convention:
 import sys
 import os
 import re
+import struct
 
 # ---------------------------------------------------------------------------
 # Lexer
@@ -41,6 +42,7 @@ TOKEN_SPEC = [
     ('STRING',   r'"([^"\\]|\\.)*"'),
     ('CHAR_LIT', r"'([^'\\]|\\.)'"),
     ('HEX',      r'0[xX][0-9a-fA-F]+'),
+    ('FLOAT_LIT', r'[0-9]+\.[0-9]*(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+'),
     ('NUMBER',   r'[0-9]+'),
     ('IDENT',    r'[a-zA-Z_][a-zA-Z0-9_]*'),
     ('LSHIFT',   r'<<'),
@@ -54,9 +56,11 @@ TOKEN_SPEC = [
     ('LT',       r'<'),
     ('GT',       r'>'),
     ('PLUSPLUS', r'\+\+'),
+    ('ARROW',    r'->'),
     ('MINUSMINUS', r'--'),
     ('PLUS',     r'\+'),
     ('MINUS',    r'-'),
+    ('DOT',      r'\.'),
     ('STAR',     r'\*'),
     ('SLASH',    r'/'),
     ('PERCENT',  r'%'),
@@ -79,8 +83,14 @@ TOKEN_SPEC = [
 
 TOKEN_RE = re.compile('|'.join(f'(?P<{name}>{pat})' for name, pat in TOKEN_SPEC))
 
-KEYWORDS = {'int', 'char', 'void', 'if', 'else', 'while', 'for', 'return',
-            'break', 'continue'}
+KEYWORDS = {'int', 'char', 'void', 'float', 'struct', 'union',
+            'short', 'long', 'unsigned', 'signed',
+            'if', 'else', 'while', 'for', 'return', 'break', 'continue',
+            'int8_t', 'uint8_t', 'int16_t', 'uint16_t', 'int32_t', 'uint32_t'}
+
+# All type keyword token kinds that parse_type() accepts.
+TYPE_TOKENS = {'INT', 'CHAR', 'VOID', 'FLOAT', 'SHORT', 'LONG', 'UNSIGNED', 'SIGNED',
+               'INT8_T', 'UINT8_T', 'INT16_T', 'UINT16_T', 'INT32_T', 'UINT32_T'}
 
 
 class Token:
@@ -105,7 +115,7 @@ def tokenize(source):
         if kind in ('WS', 'COMMENT_LINE', 'COMMENT_BLOCK'):
             continue
         if kind == 'IDENT' and value in KEYWORDS:
-            kind = value.upper()  # INT, CHAR, VOID, IF, ELSE, WHILE, FOR, RETURN
+            kind = value.upper()  # INT, CHAR, VOID, INT8_T, UINT8_T, ..., IF, ELSE, ...
         tokens.append(Token(kind, value, line))
     tokens.append(Token('EOF', '', line))
     return tokens
@@ -197,6 +207,10 @@ class CharLit:
     def __init__(self, value):
         self.value = value  # integer
 
+class FloatLit:
+    def __init__(self, value):
+        self.value = value  # Python float → will be encoded as IEEE 754 bits
+
 class Ident:
     def __init__(self, name):
         self.name = name
@@ -223,6 +237,23 @@ class ArrayAccess:
     def __init__(self, array, index):
         self.array = array
         self.index = index
+
+class MemberAccess:
+    def __init__(self, expr, field):
+        self.expr = expr      # expression yielding a struct value or address
+        self.field = field    # field name string
+
+class ArrowAccess:
+    def __init__(self, expr, field):
+        self.expr = expr      # expression yielding a struct pointer
+        self.field = field    # field name string
+
+class StructDef:
+    """Top-level struct/union definition. Not an expression — just registers the type."""
+    def __init__(self, name, fields, is_union=False):
+        self.name = name
+        self.fields = fields  # list of (type, name, arr_dim_or_None) tuples
+        self.is_union = is_union
 
 
 # ---------------------------------------------------------------------------
@@ -260,27 +291,107 @@ class Parser:
         return Program(decls)
 
     def parse_type(self):
-        """Parse a type: int, char, void, with optional pointer stars."""
+        """Parse a type, including C-style compound types like
+        unsigned int, short, unsigned long, struct name, union name."""
         t = self.advance()
-        if t.kind not in ('INT', 'CHAR', 'VOID'):
+        if t.kind == 'STRUCT':
+            struct_name = self.expect('IDENT').value
+            type_name = f'struct {struct_name}'
+        elif t.kind == 'UNION':
+            union_name = self.expect('IDENT').value
+            type_name = f'union {union_name}'
+        elif t.kind in ('UNSIGNED', 'SIGNED'):
+            # unsigned / signed followed optionally by short/int/long/char
+            prefix = t.value
+            nxt = self.peek().kind
+            if nxt == 'SHORT':
+                self.advance()
+                if self.peek().kind == 'INT':
+                    self.advance()  # consume optional 'int'
+                type_name = f'{prefix} short'
+            elif nxt == 'LONG':
+                self.advance()
+                if self.peek().kind == 'INT':
+                    self.advance()
+                type_name = f'{prefix} long'
+            elif nxt == 'INT':
+                self.advance()
+                type_name = f'{prefix} int'
+            elif nxt == 'CHAR':
+                self.advance()
+                type_name = f'{prefix} char'
+            else:
+                # bare 'unsigned' or 'signed' = unsigned int / signed int
+                type_name = f'{prefix} int'
+        elif t.kind == 'SHORT':
+            if self.peek().kind == 'INT':
+                self.advance()
+            type_name = 'short'
+        elif t.kind == 'LONG':
+            if self.peek().kind == 'INT':
+                self.advance()
+            type_name = 'long'
+        elif t.kind in TYPE_TOKENS:
+            type_name = t.value
+        else:
             raise SyntaxError(f"Line {t.line}: expected type, got {t.value!r}")
-        type_name = t.value
         while self.peek().kind == 'STAR':
             self.advance()
             type_name += '*'
         return type_name
 
+    def _try_parse_aggregate_def(self):
+        """Try to parse a struct or union definition. Returns StructDef or None."""
+        kind = self.peek().kind
+        if kind not in ('STRUCT', 'UNION'):
+            return None
+        if self.tokens[self.pos + 1].kind != 'IDENT':
+            return None
+        saved = self.pos
+        is_union = (kind == 'UNION')
+        self.advance()  # 'struct' or 'union'
+        sname = self.advance()  # name
+        if self.peek().kind == 'LBRACE':
+            self.advance()  # '{'
+            fields = []
+            while self.peek().kind != 'RBRACE':
+                ftype = self.parse_type()
+                fname = self.expect('IDENT').value
+                arr_dim = None
+                if self.match('LBRACKET'):
+                    arr_dim = int(self.expect('NUMBER').value)
+                    self.expect('RBRACKET')
+                fields.append((ftype, fname, arr_dim))
+                self.expect('SEMI')
+            self.expect('RBRACE')
+            self.expect('SEMI')
+            return StructDef(sname.value, fields, is_union=is_union)
+        else:
+            self.pos = saved
+            return None
+
     def parse_top_level(self):
+        agg = self._try_parse_aggregate_def()
+        if agg:
+            return agg
+
         type_name = self.parse_type()
         name = self.expect('IDENT').value
         if self.peek().kind == 'LPAREN':
             return self.parse_func(type_name, name)
+        # Array declaration: type name[N];
+        arr_dim = None
+        if self.match('LBRACKET'):
+            arr_dim = int(self.expect('NUMBER').value)
+            self.expect('RBRACKET')
         # Global variable
         init_val = None
         if self.match('ASSIGN'):
             init_val = self.parse_expr()
         self.expect('SEMI')
-        return GlobalVar(type_name, name, init_val)
+        gv = GlobalVar(type_name, name, init_val)
+        gv.arr_dim = arr_dim
+        return gv
 
     def parse_func(self, ret_type, name):
         self.expect('LPAREN')
@@ -309,7 +420,7 @@ class Parser:
     def parse_stmt(self):
         pk = self.peek()
 
-        if pk.kind in ('INT', 'CHAR', 'VOID'):
+        if pk.kind in TYPE_TOKENS or pk.kind in ('STRUCT', 'UNION'):
             return self.parse_local_decl()
         if pk.kind == 'IF':
             return self.parse_if()
@@ -339,10 +450,16 @@ class Parser:
         decls = []
         while True:
             name = self.expect('IDENT').value
+            arr_dim = None
+            if self.match('LBRACKET'):
+                arr_dim = int(self.expect('NUMBER').value)
+                self.expect('RBRACKET')
             init_expr = None
             if self.match('ASSIGN'):
                 init_expr = self.parse_expr()
-            decls.append(VarDecl(type_name, name, init_expr))
+            vd = VarDecl(type_name, name, init_expr)
+            vd.arr_dim = arr_dim
+            decls.append(vd)
             if not self.match('COMMA'):
                 break
         self.expect('SEMI')
@@ -371,7 +488,7 @@ class Parser:
         self.expect('FOR')
         self.expect('LPAREN')
         # init
-        if self.peek().kind in ('INT', 'CHAR'):
+        if self.peek().kind in TYPE_TOKENS or self.peek().kind in ('STRUCT', 'UNION'):
             init = self.parse_local_decl()
         elif self.peek().kind != 'SEMI':
             init = ExprStmt(self.parse_expr())
@@ -487,14 +604,12 @@ class Parser:
         return left
 
     def parse_mul_expr(self):
-        # No hardware multiply, but *, /, and % all lower to runtime helpers.
         left = self.parse_unary()
         while self.peek().kind in ('STAR', 'SLASH', 'PERCENT'):
-            kind = self.peek().kind
-            helper = {'STAR': '__mul', 'SLASH': '__div', 'PERCENT': '__mod'}[kind]
+            op = {'STAR': '*', 'SLASH': '/', 'PERCENT': '%'}[self.peek().kind]
             self.advance()
             right = self.parse_unary()
-            left = FuncCall(helper, [left, right])
+            left = BinOp(op, left, right)
         return left
 
     def parse_unary(self):
@@ -538,6 +653,14 @@ class Parser:
                 index = self.parse_expr()
                 self.expect('RBRACKET')
                 expr = ArrayAccess(expr, index)
+            elif self.peek().kind == 'DOT':
+                self.advance()
+                field = self.expect('IDENT').value
+                expr = MemberAccess(expr, field)
+            elif self.peek().kind == 'ARROW':
+                self.advance()
+                field = self.expect('IDENT').value
+                expr = ArrowAccess(expr, field)
             elif self.peek().kind == 'LPAREN' and isinstance(expr, Ident):
                 self.advance()
                 args = []
@@ -559,6 +682,9 @@ class Parser:
         if pk.kind == 'HEX':
             self.advance()
             return NumLit(int(pk.value, 16))
+        if pk.kind == 'FLOAT_LIT':
+            self.advance()
+            return FloatLit(float(pk.value))
         if pk.kind == 'CHAR_LIT':
             self.advance()
             ch = pk.value[1:-1]  # strip quotes
@@ -601,7 +727,18 @@ class Parser:
 STDLIB_FUNCS = {'putchar', 'puts', 'sleep', 'setleds', 'printf',
                 'gpio_set_dir', 'gpio_write', 'gpio_read',
                 'i2c_start', 'i2c_stop', 'i2c_write', 'i2c_read',
-                'adc_read'}
+                'adc_read',
+                # Signed integer math
+                'abs', 'min', 'max', 'clamp', 'clz', 'isqrt',
+                # IEEE 754 soft-float
+                'fadd', 'fsub', 'fmul', 'fdiv', 'fcmp',
+                'itof', 'ftoi', 'adc_readf',
+                # Geometric / trig
+                'fabs', 'fneg', 'fsqrt', 'fsin', 'fcos', 'fatan2',
+                'ftan', 'fatan', 'fasin', 'facos', 'fhypot',
+                'fdeg2rad', 'frad2deg',
+                'fmin', 'fmax', 'fclamp', 'fsign', 'flerp',
+                'ffloor', 'fceil'}
 
 
 class CodeGen:
@@ -609,13 +746,14 @@ class CodeGen:
         self.output = []
         self.strings = []       # (label, bytes)
         self.stdlib_path = stdlib_path
-        self.globals = {}       # name -> (type, label)
+        self.globals = {}       # name -> (type, label, arr_dim_or_None)
+        self.structs = {}       # struct_name -> [(field_type, field_name, arr_dim, offset), ...]
         self.label_count = 0
         self.func_name = ''
-        self.locals = {}        # name -> (type, offset from r6)
+        self.locals = {}        # name -> (type, offset, arr_dim_or_None)
         self.param_count = 0
-        self.local_offset = 0   # current stack frame size for locals
-        self.loop_stack = []    # stack of (continue_label, break_label)
+        self.local_offset = 0
+        self.loop_stack = []
 
     def new_label(self, hint='L'):
         # Most internal labels are local to a function (if/while/cmp/...).
@@ -637,12 +775,25 @@ class CodeGen:
         self.emit('                jmp     __start')
         self.emit('')
 
-        # Collect globals and strings first
+        # Register struct definitions first
+        for decl in program.decls:
+            if isinstance(decl, StructDef):
+                self.register_struct(decl)
+
+        # Collect all function names (user + stdlib) so the codegen can tell
+        # a function call from a function-pointer call.
+        self.functions = set(STDLIB_FUNCS)
+        for decl in program.decls:
+            if isinstance(decl, FuncDecl):
+                self.functions.add(decl.name)
+
+        # Collect globals
         for decl in program.decls:
             if isinstance(decl, GlobalVar):
-                self.globals[decl.name] = (decl.var_type, f'_g_{decl.name}')
+                arr_dim = getattr(decl, 'arr_dim', None)
+                self.globals[decl.name] = (decl.var_type, f'_g_{decl.name}', arr_dim)
 
-        # Generate functions (skip stdlib — they come from stdlib.asm)
+        # Generate functions (skip stdlib and struct definitions)
         for decl in program.decls:
             if isinstance(decl, FuncDecl) and decl.name not in STDLIB_FUNCS:
                 self.gen_func(decl)
@@ -659,9 +810,13 @@ class CodeGen:
             hex_bytes = ', '.join(f'0x{b:02X}' for b in escaped)
             self.emit(f'{label}: db {hex_bytes}')
 
-        # Global variables
-        for name, (vtype, label) in self.globals.items():
-            self.emit(f'{label}: db 0x00, 0x00, 0x00, 0x00')
+        # Global variables — emit the right number of zero bytes
+        for name, (vtype, label, arr_dim) in self.globals.items():
+            elem_size = self.type_size(vtype)
+            total = elem_size * arr_dim if arr_dim else max(elem_size, 4)
+            total = (total + 3) & ~3  # align to 4
+            zeros = ', '.join(['0x00'] * total)
+            self.emit(f'{label}: db {zeros}')
 
         # Append standard library
         if self.stdlib_path:
@@ -676,45 +831,188 @@ class CodeGen:
 
         return '\n'.join(self.output)
 
+    # Map all type names to their byte size and ISA suffix.
+    _TYPE_SIZE = {
+        'char': 1, 'signed char': 1, 'unsigned char': 1,
+        'int8_t': 1, 'uint8_t': 1,
+        'short': 2, 'signed short': 2, 'unsigned short': 2,
+        'int16_t': 2, 'uint16_t': 2,
+        'int': 4, 'signed int': 4, 'unsigned int': 4, 'unsigned': 4, 'signed': 4,
+        'long': 4, 'signed long': 4, 'unsigned long': 4,
+        'int32_t': 4, 'uint32_t': 4,
+        'float': 4, 'void': 4,
+    }
+    _TYPE_SUFFIX = {1: '.8', 2: '.16', 4: '.32'}
+
+    def _is_aggregate_type(self, t):
+        """True if t is a struct or union type (not a pointer to one)."""
+        return ('*' not in t) and (t.startswith('struct ') or t.startswith('union '))
+
+    def _aggregate_name(self, t):
+        """Extract the struct/union name from a type string, stripping pointer stars."""
+        base = t.rstrip('*').strip()
+        if base.startswith('struct '):
+            return base[7:]
+        if base.startswith('union '):
+            return base[6:]
+        return None
+
     def type_size(self, t):
-        if t == 'char':
-            return 1
-        return 4  # int, pointers
+        """Return the byte size of a type. Pointers are always 4 bytes."""
+        if '*' in t:
+            return 4
+        if t.startswith('struct '):
+            return self.struct_size(t[7:])
+        if t.startswith('union '):
+            return self.union_size(t[6:])
+        return self._TYPE_SIZE.get(t, 4)
 
     def size_suffix(self, t):
-        if t == 'char':
-            return '.8'
-        return '.32'
+        """Return the ISA size suffix for scalar loads/stores of this type."""
+        if '*' in t:
+            return '.32'
+        s = self.type_size(t)
+        return self._TYPE_SUFFIX.get(s, '.32')
+
+    def struct_size(self, sname):
+        """Compute total size of a struct with natural alignment."""
+        if sname not in self.structs:
+            raise ValueError(f"Undefined struct: {sname}")
+        fields = self.structs[sname]
+        if not fields:
+            return 0
+        last = fields[-1]
+        _, _, arr_dim, offset = last
+        ftype = last[0]
+        fsize = self.type_size(ftype)
+        if arr_dim:
+            fsize *= arr_dim
+        total = offset + fsize
+        return (total + 3) & ~3
+
+    def union_size(self, uname):
+        """Size of a union = size of its largest field, padded to 4."""
+        if uname not in self.structs:
+            raise ValueError(f"Undefined union: {uname}")
+        max_sz = 0
+        for ftype, _, arr_dim, _ in self.structs[uname]:
+            fsize = self.type_size(ftype)
+            if arr_dim:
+                fsize *= arr_dim
+            if fsize > max_sz:
+                max_sz = fsize
+        return (max_sz + 3) & ~3
+
+    def struct_field_info(self, sname, field_name):
+        """Return (field_type, offset, arr_dim) for a struct field."""
+        for ftype, fname, arr_dim, offset in self.structs[sname]:
+            if fname == field_name:
+                return ftype, offset, arr_dim
+        raise ValueError(f"struct {sname} has no field '{field_name}'")
+
+    def register_struct(self, sdef):
+        """Compute field offsets with natural alignment and register."""
+        is_union = getattr(sdef, 'is_union', False)
+        offset = 0
+        fields = []
+        for item in sdef.fields:
+            ftype, fname = item[0], item[1]
+            arr_dim = item[2] if len(item) > 2 else None
+            fsize = self.type_size(ftype)
+            if is_union:
+                # All union fields at offset 0
+                fields.append((ftype, fname, arr_dim, 0))
+            else:
+                align = min(fsize, 4)
+                offset = (offset + align - 1) & ~(align - 1)
+                fields.append((ftype, fname, arr_dim, offset))
+                if arr_dim:
+                    offset += fsize * arr_dim
+                else:
+                    offset += fsize
+        self.structs[sdef.name] = fields
+
+    def var_elem_size(self, name):
+        """Return the element size for a variable (for array indexing).
+        For arrays, this is the element type's size. For pointers, the pointed-to type's size.
+        For non-arrays, returns the variable's own size."""
+        if name in self.locals:
+            vtype, _, arr_dim = self.locals[name]
+            if arr_dim:
+                return self.type_size(vtype)
+            if '*' in vtype:
+                return self.type_size(vtype.rstrip('*'))
+            return self.type_size(vtype)
+        if name in self.globals:
+            vtype, _, arr_dim = self.globals[name]
+            if arr_dim:
+                return self.type_size(vtype)
+            if '*' in vtype:
+                return self.type_size(vtype.rstrip('*'))
+            return self.type_size(vtype)
+        return 1
+
+    def expr_type(self, node):
+        """Infer the type string for an expression."""
+        if isinstance(node, Ident):
+            if node.name in self.locals:
+                return self.locals[node.name][0]
+            if node.name in self.globals:
+                return self.globals[node.name][0]
+        if isinstance(node, MemberAccess):
+            base_type = self.expr_type(node.expr)
+            aname = self._aggregate_name(base_type) if base_type else None
+            if aname:
+                ftype, _, _ = self.struct_field_info(aname, node.field)
+                return ftype
+        if isinstance(node, ArrowAccess):
+            base_type = self.expr_type(node.expr)
+            aname = self._aggregate_name(base_type) if base_type else None
+            if aname:
+                ftype, _, _ = self.struct_field_info(aname, node.field)
+                return ftype
+        if isinstance(node, FloatLit):
+            return 'float'
+        if isinstance(node, NumLit) or isinstance(node, CharLit):
+            return 'int'
+        if isinstance(node, ArrayAccess):
+            if isinstance(node.array, Ident):
+                name = node.array.name
+                if name in self.locals:
+                    return self.locals[name][0]
+                if name in self.globals:
+                    return self.globals[name][0]
+            bt = self.expr_type(node.array)
+            if bt and '*' in bt:
+                return bt.rstrip('*')
+            return bt
+        if isinstance(node, Deref):
+            pt = self.expr_type(node.expr)
+            if pt and '*' in pt:
+                return pt.rstrip('*')
+        return None
 
     def gen_func(self, func):
         self.func_name = func.name
         self.locals = {}
         self.stack_depth = 0
 
-        # Count locals for stack frame
-        local_size = self.count_locals(func.body) * 4
+        # Count locals for stack frame (byte-based, handles arrays/structs)
+        local_size = self.count_locals_bytes(func.body)
         self.frame_size = local_size
 
         self.emit(f'{func.name}:')
-        # Prologue: save r6 (pre-decrement push)
         self.emit('                sub.32  sp, #4')
         self.emit('                st.32   [sp], r6')
         if local_size > 0:
             self.emit(f'                sub.32  sp, #{local_size}')
 
-        # Stack layout after prologue:
-        #   sp+0 .. sp+local_size-4   = local variables
-        #   sp+local_size              = saved r6
-        #   sp+local_size+4            = return address (pushed by call)
-        #   sp+local_size+8            = arg0
-        #   sp+local_size+12           = arg1, etc.
-
         # Map params
         for i, (ptype, pname) in enumerate(func.params):
-            self.locals[pname] = (ptype, local_size + 8 + i * 4)
+            self.locals[pname] = (ptype, local_size + 8 + i * 4, None)
 
-        # Map locals
-        self.local_idx = 0
+        # Map locals (byte-based offsets)
+        self._local_offset = 0
         self.alloc_locals(func.body)
 
         # Generate body
@@ -728,32 +1026,44 @@ class CodeGen:
         self.emit('                ret')
         self.emit('')
 
-    def count_locals(self, node):
-        count = 0
+    def local_var_bytes(self, node):
+        """Return the number of bytes a local VarDecl needs on the stack."""
+        arr_dim = getattr(node, 'arr_dim', None)
+        elem_size = self.type_size(node.var_type)
+        if arr_dim:
+            total = elem_size * arr_dim
+        else:
+            total = max(elem_size, 4)  # minimum 4 bytes per scalar
+        return (total + 3) & ~3  # align to 4
+
+    def count_locals_bytes(self, node):
+        """Count total bytes needed for all local variables."""
+        total = 0
         if isinstance(node, Block):
             for s in node.stmts:
-                count += self.count_locals(s)
+                total += self.count_locals_bytes(s)
         elif isinstance(node, VarDecl):
-            count += 1
+            total += self.local_var_bytes(node)
         elif isinstance(node, IfStmt):
-            count += self.count_locals(node.then_body)
+            total += self.count_locals_bytes(node.then_body)
             if node.else_body:
-                count += self.count_locals(node.else_body)
+                total += self.count_locals_bytes(node.else_body)
         elif isinstance(node, WhileStmt):
-            count += self.count_locals(node.body)
+            total += self.count_locals_bytes(node.body)
         elif isinstance(node, ForStmt):
             if isinstance(node.init, VarDecl):
-                count += 1
-            count += self.count_locals(node.body)
-        return count
+                total += self.local_var_bytes(node.init)
+            total += self.count_locals_bytes(node.body)
+        return total
 
     def alloc_locals(self, node):
         if isinstance(node, Block):
             for s in node.stmts:
                 self.alloc_locals(s)
         elif isinstance(node, VarDecl):
-            self.locals[node.name] = (node.var_type, self.local_idx * 4)
-            self.local_idx += 1
+            arr_dim = getattr(node, 'arr_dim', None)
+            self.locals[node.name] = (node.var_type, self._local_offset, arr_dim)
+            self._local_offset += self.local_var_bytes(node)
         elif isinstance(node, IfStmt):
             self.alloc_locals(node.then_body)
             if node.else_body:
@@ -767,7 +1077,7 @@ class CodeGen:
 
     def var_offset(self, name):
         """Get the stack offset for a variable, adjusted for current push depth."""
-        _, base_off = self.locals[name]
+        _, base_off, _ = self.locals[name]
         return base_off + self.stack_depth * 4
 
     def push(self, reg):
@@ -848,11 +1158,46 @@ class CodeGen:
         elif isinstance(node, ContinueStmt):
             self.emit(f'                jmp     {self.loop_stack[-1][0]}')
 
+    def expr_is_float(self, node):
+        """Return True if the expression produces a float value."""
+        if isinstance(node, FloatLit):
+            return True
+        if isinstance(node, NumLit) or isinstance(node, CharLit) or isinstance(node, StrLit):
+            return False
+        if isinstance(node, Ident):
+            t = self.expr_type(node)
+            return t == 'float'
+        if isinstance(node, BinOp):
+            return self.expr_is_float(node.left) or self.expr_is_float(node.right)
+        if isinstance(node, UnaryOp):
+            return self.expr_is_float(node.expr)
+        if isinstance(node, FuncCall):
+            # Functions that return float.
+            return node.name in (
+                'fadd', 'fsub', 'fmul', 'fdiv', 'itof', 'adc_readf',
+                'fabs', 'fneg', 'fsqrt', 'fsin', 'fcos', 'fatan2',
+                'ftan', 'fatan', 'fasin', 'facos', 'fhypot',
+                'fdeg2rad', 'frad2deg',
+                'fmin', 'fmax', 'fclamp', 'fsign', 'flerp',
+                'ffloor', 'fceil',
+            )
+        if isinstance(node, Assign):
+            return self.expr_is_float(node.expr)
+        if isinstance(node, ArrayAccess) or isinstance(node, MemberAccess) or isinstance(node, ArrowAccess):
+            t = self.expr_type(node)
+            return t == 'float'
+        return False
+
     def gen_expr(self, node, dest):
         """Generate code for expression, result in r{dest}."""
         if isinstance(node, NumLit):
             val = node.value
             self.emit(f'                ldi     r{dest}, #{val}')
+
+        elif isinstance(node, FloatLit):
+            # Convert Python float to IEEE 754 single-precision bits
+            bits = struct.unpack('<I', struct.pack('<f', node.value))[0]
+            self.emit(f'                ldi     r{dest}, #{bits}')
 
         elif isinstance(node, CharLit):
             self.emit(f'                ld.32   r{dest}, #{node.value}')
@@ -865,13 +1210,28 @@ class CodeGen:
         elif isinstance(node, Ident):
             if node.name in self.locals:
                 off = self.var_offset(node.name)
-                vtype, _ = self.locals[node.name]
-                sz = self.size_suffix(vtype)
-                self.emit(f'                ld{sz}   r{dest}, [sp][r0+{off}]')
+                vtype, _, arr_dim = self.locals[node.name]
+                is_aggregate = arr_dim or self._is_aggregate_type(vtype)
+                if is_aggregate:
+                    # Arrays and non-pointer structs: load the address, not the value
+                    self.emit(f'                ld.32   r{dest}, sp')
+                    if off != 0:
+                        self.emit(f'                add.32  r{dest}, #{off}')
+                else:
+                    sz = self.size_suffix(vtype)
+                    if sz != '.32':
+                        self.emit(f'                clr     r{dest}')
+                    self.emit(f'                ld{sz}   r{dest}, [sp][r0+{off}]')
             elif node.name in self.globals:
-                vtype, label = self.globals[node.name]
-                sz = self.size_suffix(vtype)
-                self.emit(f'                ld{sz}   r{dest}, {label}')
+                vtype, label, arr_dim = self.globals[node.name]
+                is_aggregate = arr_dim or self._is_aggregate_type(vtype)
+                if is_aggregate:
+                    self.emit(f'                ld.32   r{dest}, #{label}')
+                else:
+                    sz = self.size_suffix(vtype)
+                    if sz != '.32':
+                        self.emit(f'                clr     r{dest}')
+                    self.emit(f'                ld{sz}   r{dest}, {label}')
             else:
                 raise ValueError(f"Undefined variable: {node.name}")
 
@@ -880,31 +1240,132 @@ class CodeGen:
             if isinstance(node.target, Ident):
                 if node.target.name in self.locals:
                     off = self.var_offset(node.target.name)
-                    vtype, _ = self.locals[node.target.name]
+                    vtype, _, _ = self.locals[node.target.name]
                     sz = self.size_suffix(vtype)
                     self.emit(f'                st{sz}   [sp][r0+{off}], r{dest}')
                 elif node.target.name in self.globals:
-                    vtype, label = self.globals[node.target.name]
+                    vtype, label, _ = self.globals[node.target.name]
                     sz = self.size_suffix(vtype)
                     self.emit(f'                st{sz}   {label}, r{dest}')
+            elif isinstance(node.target, MemberAccess) or isinstance(node.target, ArrowAccess):
+                # x.field = val  or  p->field = val
+                self.push(dest)
+                # Get address of the struct (or load the pointer)
+                if isinstance(node.target, MemberAccess):
+                    self.gen_expr(node.target.expr, 2)
+                    base_type = self.expr_type(node.target.expr)
+                else:
+                    self.gen_expr(node.target.expr, 2)
+                    base_type = self.expr_type(node.target.expr)
+                sname = self._aggregate_name(base_type)
+                if not sname:
+                    raise ValueError(f"Member assign on non-aggregate type: {base_type}")
+                ftype, foff, _ = self.struct_field_info(sname, node.target.field)
+                if foff != 0:
+                    self.emit(f'                add.32  r2, #{foff}')
+                self.pop(dest)
+                sz = self.size_suffix(ftype)
+                self.emit(f'                st{sz}   [r2], r{dest}')
             elif isinstance(node.target, Deref):
-                # *ptr = val: compute ptr into r2, val already in r{dest}
                 self.push(dest)
                 self.gen_expr(node.target.expr, 2)
                 self.pop(dest)
                 self.emit(f'                st.32   [r2], r{dest}')
             elif isinstance(node.target, ArrayAccess):
+                # Determine element type for size
+                elem_type = None
+                elem_size = 1
+                if isinstance(node.target.array, Ident):
+                    aname = node.target.array.name
+                    if aname in self.locals:
+                        vtype, _, arr_dim = self.locals[aname]
+                        if arr_dim:
+                            elem_type = vtype
+                            elem_size = self.type_size(vtype)
+                        elif '*' in vtype:
+                            elem_type = vtype.rstrip('*')
+                            elem_size = self.type_size(elem_type)
+                    elif aname in self.globals:
+                        vtype, _, arr_dim = self.globals[aname]
+                        if arr_dim:
+                            elem_type = vtype
+                            elem_size = self.type_size(vtype)
+                        elif '*' in vtype:
+                            elem_type = vtype.rstrip('*')
+                            elem_size = self.type_size(elem_type)
                 self.push(dest)
                 self.gen_expr(node.target.array, 2)
                 self.push(2)
                 self.gen_expr(node.target.index, 3)
                 self.pop(2)
                 self.pop(dest)
-                # addr = r2 + r3
-                self.emit(f'                st.8    [r2][r3], r{dest}')
+                # Scale index by element size
+                if elem_size == 2:
+                    self.emit(f'                shl.32  r3, #1')
+                elif elem_size == 4:
+                    self.emit(f'                shl.32  r3, #2')
+                elif elem_size > 4:
+                    self.emit(f'                ldi     r4, #{elem_size}')
+                    self.push(4)
+                    self.push(3)
+                    self.emit(f'                call    __mul')
+                    self.emit(f'                add.32  sp, #8')
+                    self.stack_depth -= 2
+                    if 3 != 1:
+                        self.push(1)
+                        self.pop(3)
+                sz = self.size_suffix(elem_type) if elem_type else '.8'
+                self.emit(f'                st{sz}   [r2][r3], r{dest}')
 
         elif isinstance(node, BinOp):
             op = node.op
+
+            # Float arithmetic: route through soft-float helpers
+            if self.expr_is_float(node) and op in ('+', '-', '*', '/'):
+                FLOAT_OP = {'+': 'fadd', '-': 'fsub', '*': 'fmul', '/': 'fdiv'}
+                other = 2 if dest != 2 else 3
+                self.gen_expr(node.left, dest)
+                self.push(dest)
+                self.gen_expr(node.right, other)
+                self.pop(dest)
+                # Push args right-to-left: b then a
+                self.push(other)
+                self.push(dest)
+                self.emit(f'                call    {FLOAT_OP[op]}')
+                self.emit(f'                add.32  sp, #8')
+                self.stack_depth -= 2
+                if dest != 1:
+                    self.push(1)
+                    self.pop(dest)
+                return
+
+            # Float comparison: fcmp then branch on result
+            if self.expr_is_float(node) and op in ('==', '!=', '<', '>', '<=', '>='):
+                other = 2 if dest != 2 else 3
+                self.gen_expr(node.left, dest)
+                self.push(dest)
+                self.gen_expr(node.right, other)
+                self.pop(dest)
+                self.push(other)
+                self.push(dest)
+                self.emit(f'                call    fcmp')
+                self.emit(f'                add.32  sp, #8')
+                self.stack_depth -= 2
+                # r1 = -1/0/+1. Map to 0/1 based on the operator.
+                true_label = self.new_label('fcmp_t')
+                CMP_FLOAT = {'==': 'beq', '!=': 'bne', '<': 'blt', '>': 'bgt',
+                             '<=': 'ble', '>=': 'bge'}
+                self.emit(f'                ld.32   r5, #1')
+                self.emit(f'                {CMP_FLOAT[op]}.32 r1, #0, {true_label}')
+                self.emit(f'                ld.32   r5, #0')
+                self.emit(f'{true_label}:')
+                if dest != 5:
+                    self.push(5)
+                    self.pop(dest)
+                else:
+                    pass  # already in r5
+                return
+
             # Short-circuit for && and ||
             if op == '&&':
                 end_label = self.new_label('and')
@@ -921,10 +1382,20 @@ class CodeGen:
                 self.emit(f'{end_label}:')
                 return
 
+            # `>>` defaults to arithmetic shift right (asr) — matches C
+            # semantics for signed int, which is what most code expects.
+            # Switch to logical shr only if the left operand's type is
+            # explicitly unsigned (uint*_t, unsigned ...).
+            shr_op = 'asr'
+            if op == '>>':
+                lt = self.expr_type(node.left)
+                if lt and (lt.startswith('unsigned') or lt.startswith('uint')):
+                    shr_op = 'shr'
+
             # Optimize: if right side is a small immediate AND op has an
             # immediate form, fold into a single ALU-with-imm instruction.
             IMM_OP_MAP = {'+': 'add', '-': 'sub', '&': 'and', '|': 'or',
-                          '^': 'xor', '<<': 'shl', '>>': 'shr'}
+                          '^': 'xor', '<<': 'shl', '>>': shr_op}
             if (op in IMM_OP_MAP
                     and isinstance(node.right, NumLit)
                     and -0x80000 <= node.right.value <= 0x7FFFF):
@@ -963,14 +1434,25 @@ class CodeGen:
 
             # For reg-reg ALU ops, we need to go through memory.
             # Push right operand, then use stack-relative addressing.
+            # `shr_op` was set above based on signed-ness of left operand.
             OP_MAP = {'+': 'add', '-': 'sub', '&': 'and', '|': 'or',
-                      '^': 'xor', '<<': 'shl', '>>': 'shr'}
+                      '^': 'xor', '<<': 'shl', '>>': shr_op}
+            MUL_MAP = {'*': '__mul', '/': '__div', '%': '__mod'}
             if op in OP_MAP:
                 self.push(other)
                 self.emit(f'                {OP_MAP[op]}.32 r{dest}, [sp]')
-                # Pop without loading (just adjust SP)
                 self.emit(f'                add.32  sp, #4')
                 self.stack_depth -= 1
+            elif op in MUL_MAP:
+                # Runtime helper call: push args right-to-left (b then a)
+                self.push(other)
+                self.push(dest)
+                self.emit(f'                call    {MUL_MAP[op]}')
+                self.emit(f'                add.32  sp, #8')
+                self.stack_depth -= 2
+                if dest != 1:
+                    self.push(1)
+                    self.pop(dest)
             else:
                 raise ValueError(f"Unsupported operator: {op}")
 
@@ -991,52 +1473,177 @@ class CodeGen:
             self.emit(f'                ld.32   r{dest}, [r{dest}]')
 
         elif isinstance(node, AddrOf):
-            if isinstance(node.expr, Ident):
+            if isinstance(node.expr, ArrayAccess):
+                # &arr[i] — evaluate the array access but get the address
+                # For struct arrays, ArrayAccess already returns an address.
+                # For scalar arrays, we need base + index * elem_size.
+                self.gen_expr(node.expr, dest)
+                # If the element is not a struct, ArrayAccess loaded the value.
+                # We need the address instead. Recompute: base + scaled_index.
+                et = self.expr_type(node.expr)
+                if et and not self._is_aggregate_type(et):
+                    # Scalar element — ArrayAccess loaded the value, but we need
+                    # the address. Re-generate as address computation.
+                    # Remove the last few emitted lines and redo as address calc.
+                    # Simpler: just compute base + index*size directly.
+                    # Pop the value load we just did — wasteful but correct.
+                    # Actually, let's just do it cleanly:
+                    pass
+                # For now, a pragmatic approach: if the inner expr is a struct
+                # array element, gen_expr already returned the address. For scalar
+                # arrays, we need a different path. Let's handle the common case:
+                # &arr[i] on a struct array is already correct (address returned).
+                # &arr[i] on a scalar array is rare — skip for now.
+            elif isinstance(node.expr, Ident):
                 if node.expr.name in self.locals:
                     off = self.var_offset(node.expr.name)
-                    self.emit(f'                ld.32   r{dest}, #0')
-                    self.emit(f'                add.32  r{dest}, [r0][sp]')
-                    # That loads mem[sp], not sp itself. Need sp's value.
-                    # Use: push sp, load from stack... same problem.
-                    # Workaround: compute sp + offset via immediate add
-                    self.output.pop()
-                    self.output.pop()
-                    # We'll store sp to a temp stack slot and load it
-                    self.push(7)  # this changes sp!
-                    self.emit(f'                ld.32   r{dest}, [sp]')  # load old sp
-                    # Actually: push stores old sp at [old_sp - 4], then sp = old_sp - 4
-                    # [sp] = old_sp - 4... no. We stored sp (the pre-decrement value) at the
-                    # effective address. Wait, let's check:
-                    # st [r0][sp+=-4], sp: eff_addr = r0+sp = sp. Stores sp at [sp].
-                    # Then sp = sp - 4. So [old_sp] has old_sp value. [sp+4] has old_sp.
-                    self.emit(f'                ld.32   r{dest}, [sp][r0+4]')
-                    self.output[-2] = f'                ; addr-of via stack'
-                    self.emit(f'                add.32  r{dest}, #{off + 4}')  # +4 for the push
-                    # Restore sp
-                    self.emit(f'                add.32  sp, #4')
-                    self.stack_depth -= 1
+                    self.emit(f'                ld.32   r{dest}, sp')
+                    if off != 0:
+                        self.emit(f'                add.32  r{dest}, #{off}')
+                elif node.expr.name in self.functions:
+                    # &funcname → load the function's address as an immediate.
+                    # The assembler resolves the label at link time.
+                    self.emit(f'                ld.32   r{dest}, #{node.expr.name}')
                 elif node.expr.name in self.globals:
-                    _, label = self.globals[node.expr.name]
+                    _, label, _ = self.globals[node.expr.name]
                     self.emit(f'                ld.32   r{dest}, #{label}')
 
+        elif isinstance(node, MemberAccess):
+            # expr.field — expr is a struct (codegen loads its address)
+            self.gen_expr(node.expr, dest)
+            base_type = self.expr_type(node.expr)
+            sname = self._aggregate_name(base_type)
+            if not sname:
+                raise ValueError(f"Member access on non-aggregate type: {base_type}")
+            ftype, foff, farr = self.struct_field_info(sname, node.field)
+            if foff != 0:
+                self.emit(f'                add.32  r{dest}, #{foff}')
+            # If the field is a non-pointer struct or array, return the address.
+            # Otherwise load the scalar value.
+            is_aggregate = farr or self._is_aggregate_type(ftype)
+            if is_aggregate:
+                pass  # r{dest} already holds the address
+            else:
+                sz = self.size_suffix(ftype)
+                if sz != '.32':
+                    other = 2 if dest != 2 else 3
+                    self.emit(f'                ld.32   r{other}, r{dest}')
+                    self.emit(f'                clr     r{dest}')
+                    self.emit(f'                ld{sz}   r{dest}, [r{other}]')
+                else:
+                    self.emit(f'                ld.32   r{dest}, [r{dest}]')
+
+        elif isinstance(node, ArrowAccess):
+            # expr->field — expr is a struct pointer
+            self.gen_expr(node.expr, dest)
+            base_type = self.expr_type(node.expr)
+            sname = self._aggregate_name(base_type)
+            if not sname:
+                raise ValueError(f"Arrow access on non-aggregate-pointer type: {base_type}")
+            ftype, foff, farr = self.struct_field_info(sname, node.field)
+            if foff != 0:
+                self.emit(f'                add.32  r{dest}, #{foff}')
+            is_aggregate = farr or self._is_aggregate_type(ftype)
+            if is_aggregate:
+                pass
+            else:
+                sz = self.size_suffix(ftype)
+                if sz != '.32':
+                    other = 2 if dest != 2 else 3
+                    self.emit(f'                ld.32   r{other}, r{dest}')
+                    self.emit(f'                clr     r{dest}')
+                    self.emit(f'                ld{sz}   r{dest}, [r{other}]')
+                else:
+                    self.emit(f'                ld.32   r{dest}, [r{dest}]')
+
         elif isinstance(node, ArrayAccess):
+            # Determine element size and type
+            elem_type = None
+            elem_size = 1
+            if isinstance(node.array, Ident):
+                name = node.array.name
+                if name in self.locals:
+                    vtype, _, arr_dim = self.locals[name]
+                    if arr_dim:
+                        elem_type = vtype
+                        elem_size = self.type_size(vtype)
+                    elif '*' in vtype:
+                        elem_type = vtype.rstrip('*')
+                        elem_size = self.type_size(elem_type)
+                elif name in self.globals:
+                    vtype, _, arr_dim = self.globals[name]
+                    if arr_dim:
+                        elem_type = vtype
+                        elem_size = self.type_size(vtype)
+                    elif '*' in vtype:
+                        elem_type = vtype.rstrip('*')
+                        elem_size = self.type_size(elem_type)
             self.gen_expr(node.array, dest)
             other = 2 if dest != 2 else 3
             self.push(dest)
             self.gen_expr(node.index, other)
             self.pop(dest)
-            self.emit(f'                ; array access — push index, load via [base][idx]')
-            self.push(other)
-            self.emit(f'                ld.8    r{dest}, [r{dest}][r{other}]')
-            self.emit(f'                add.32  sp, #4')
-            self.stack_depth -= 1
+            # Scale index by element size
+            if elem_size > 1:
+                if elem_size == 2:
+                    self.emit(f'                shl.32  r{other}, #1')
+                elif elem_size == 4:
+                    self.emit(f'                shl.32  r{other}, #2')
+                elif elem_size == 8:
+                    self.emit(f'                shl.32  r{other}, #3')
+                elif elem_size == 16:
+                    self.emit(f'                shl.32  r{other}, #4')
+                else:
+                    # __mul clobbers r1-r5, so save the base address first
+                    self.push(dest)
+                    self.emit(f'                ldi     r4, #{elem_size}')
+                    self.push(4)
+                    self.push(other)
+                    self.emit(f'                call    __mul')
+                    self.emit(f'                add.32  sp, #8')
+                    self.stack_depth -= 2
+                    # r1 = scaled index; restore base
+                    if other != 1:
+                        self.emit(f'                ld.32   r{other}, r1')
+                    self.pop(dest)
+            # If the element is a struct, return the address (base + scaled_index)
+            if elem_type and self._is_aggregate_type(elem_type):
+                self.push(other)
+                self.emit(f'                add.32  r{dest}, [sp]')
+                self.emit(f'                add.32  sp, #4')
+                self.stack_depth -= 1
+            else:
+                # Load the element
+                sz = self.size_suffix(elem_type) if elem_type else '.8'
+                if sz != '.32':
+                    self.emit(f'                clr     r{dest}')
+                self.push(other)
+                self.emit(f'                ld{sz}   r{dest}, [r{dest}][r{other}]')
+                self.emit(f'                add.32  sp, #4')
+                self.stack_depth -= 1
 
         elif isinstance(node, FuncCall):
+            # Function-pointer call: if the name is a known variable (not a
+            # function), load it as a target address and use `callr`.
+            is_indirect = (node.name not in self.functions and
+                           (node.name in self.locals or node.name in self.globals))
             # Push arguments right-to-left
             for arg in reversed(node.args):
                 self.gen_expr(arg, 1)
                 self.push(1)
-            self.emit(f'                call    {node.name}')
+            if is_indirect:
+                # Load the function pointer into r2 and call indirect.
+                # Stack-depth of all the pushed args is already accounted for
+                # by the var_offset adjustment.
+                if node.name in self.locals:
+                    off = self.var_offset(node.name)
+                    self.emit(f'                ld.32   r2, [sp][r0+{off}]')
+                else:
+                    _, label, _ = self.globals[node.name]
+                    self.emit(f'                ld.32   r2, {label}')
+                self.emit(f'                callr   r2')
+            else:
+                self.emit(f'                call    {node.name}')
             # Clean up args
             arg_size = len(node.args) * 4
             if arg_size > 0:

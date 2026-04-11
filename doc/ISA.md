@@ -155,7 +155,7 @@ The size suffix affects comparison: `.8` compares lower 8 bits (sign-extended), 
 
 ## Instruction Index
 
-The MPU has 19 native opcodes. The assembler also accepts five pseudo-instructions (`clr`, `ldi`, `jmp`, `push`, `pop`) that expand to one or two native instructions; the CPU never sees them, but they're how you should write assembly by hand. Both kinds appear in the alphabetical reference below — the table here groups them by function. Note that a register-to-register move is just `ld.32 rD, rS` — AGU mode 00 makes the source register the operand, so `ld` already *is* the move instruction. No dedicated pseudo is needed.
+The MPU has 22 native opcodes. The assembler also accepts five pseudo-instructions (`clr`, `ldi`, `jmp`, `push`, `pop`) that expand to one or two native instructions; the CPU never sees them, but they're how you should write assembly by hand. Both kinds appear in the alphabetical reference below — the table here groups them by function. Note that a register-to-register move is just `ld.32 rD, rS` — AGU mode 00 makes the source register the operand, so `ld` already *is* the move instruction. No dedicated pseudo is needed.
 
 ### Data movement
 
@@ -186,10 +186,11 @@ The MPU has 19 native opcodes. The assembler also accepts five pseudo-instructio
 
 ### Shift
 
-| Mnemonic | Opcode | Description                         |
-|----------|--------|-------------------------------------|
-| `shl`    | 15     | Logical shift left (zero-fill)      |
-| `shr`    | 16     | Logical shift right (zero-fill)     |
+| Mnemonic | Opcode | Description                              |
+|----------|--------|------------------------------------------|
+| `shl`    | 15     | Logical shift left (zero-fill)           |
+| `shr`    | 16     | Logical shift right (zero-fill)          |
+| `asr`    | 19     | Arithmetic shift right (sign-extend)     |
 
 ### Branches
 
@@ -205,10 +206,12 @@ The MPU has 19 native opcodes. The assembler also accepts five pseudo-instructio
 
 ### Subroutines
 
-| Mnemonic | Opcode | Description                                    |
-|----------|--------|------------------------------------------------|
-| `call`   | 17     | Push return address (PC+4) onto sp, jump       |
-| `ret`    | 18     | Pop return address from sp, jump to it         |
+| Mnemonic     | Opcode | Description                                              |
+|--------------|--------|----------------------------------------------------------|
+| `call`       | 17     | Push return address (PC+4) onto sp, jump (16-bit target) |
+| `callr rD`   | 21     | Indirect call: push PC+4, jump to address in `rD`        |
+| `ret`        | 18     | Pop return address from sp, jump to it                   |
+| `jmpr rD`    | 20     | Indirect jump: PC = `rD` (no stack push)                 |
 
 ### Control
 
@@ -312,6 +315,35 @@ and.32 r1, 0x100            ; r1 = r1 & mem.32[0x100] (absolute)
 - Useful for masking, clearing bits, and testing bit patterns.
 - `and.8 r1, #0xFF` is a no-op on the lower byte but clears the upper 24 bits (the size mask zeroes them).
 - The 20-bit immediate is sign-extended, so `#0xFF` becomes `0x000000FF` and `#-1` becomes `0xFFFFFFFF`.
+
+---
+
+### ASR (Arithmetic Shift Right)
+
+**Encoding:** `10011 | rd | size | rv | ai | payload` (opcode 19)
+
+Arithmetic shift `rd` right by the number of positions given in the operand (only bits [4:0] of the operand are used). **The sign bit is replicated** into the vacated high bits — the result is `rd` divided by `2^n` rounded toward negative infinity. Uses the full AGU; everything else is identical to `SHR`.
+
+**Operation:**
+
+```
+rd = signed(rd) >> operand[4:0]      (sign-fill)
+PC = PC + 4
+```
+
+**Examples:**
+
+```
+asr.32 r1, #1               ; r1 = r1 / 2 (signed, rounds toward -inf)
+asr.32 r1, #4               ; r1 = r1 / 16 (signed)
+asr.32 r1, r2               ; variable shift, signed
+asr.32 r1, [r2]             ; memory operand
+```
+
+**Notes:**
+
+- This is the signed counterpart of `shr` and produces the result a C `>>` on a signed integer should give. The C compiler emits `asr` for `>>` on signed types and `shr` on unsigned.
+- `-100` (`0xFFFFFF9C`) shifted right by 2 gives `-25` (`0xFFFFFFE7`), not `0x3FFFFFE7`.
 
 ---
 
@@ -532,32 +564,27 @@ bne.16 r1, #7, .next        ; branch if low 16 bits of r1 (sign-extended) != 7
 
 ### CALL (Call Subroutine)
 
-**Encoding:** `10001 | --- | -- | - | - | payload[19:0]` (opcode 17)
+**Encoding:** `10001 | --- | -- | - | - | ---- | target[15:0]` (opcode 17)
 
-Push the return address (PC + 4) onto the stack and jump to the target address. The stack pointer is sp, which is decremented by 4 before the store. The target address is the 20-bit payload sign-extended to 32 bits. Does **not** use the AGU.
+Push the return address (PC + 4) onto the stack and jump to the **16-bit absolute target** in the low half of the payload. The stack pointer is sp, which is decremented by 4 before the store. Does **not** use the AGU.
 
-The rd, size, reg_value, and addr_imm fields are present in the encoding but ignored by the hardware.
+The rd, size, reg_value, addr_imm, and payload[19:16] fields are present in the encoding but ignored by the hardware. (The upper 4 bits of the payload are reserved for future use.)
 
-**Pipeline:** In EXECUTE, the hardware performs three actions simultaneously: decrements sp by 4, issues a 32-bit memory write of (PC + 4) to the new sp address, and latches the sign-extended target address into an internal `call_target` register. Waits in MEM for `mem_ready`. In WB, sets PC to the latched `call_target`.
+**Pipeline:** In EXECUTE, the hardware performs three actions simultaneously: decrements sp by 4, issues a 32-bit memory write of (PC + 4) to the new sp address, and latches the 16-bit zero-extended target address into an internal `call_target` register. Waits in MEM for `mem_ready`. In WB, sets PC to the latched `call_target`.
 
-**Operation (step by step):**
+**Operation:**
 
 ```
 EXECUTE:
     sp = sp - 4
-    mem_addr = sp - 4             (the new sp value)
-    mem_wdata = PC + 4            (return address)
-    mem_wr = 1                    (32-bit write)
-    call_target = sign_ext(payload20)
-
-MEM:
-    wait for mem_ready
+    mem[sp] = PC + 4              (return address)
+    call_target = {16'd0, payload[15:0]}
 
 WB:
     PC = call_target
 ```
 
-**Target address range:** The 20-bit payload is sign-extended to 32 bits. Positive values 0x00000–0x7FFFF cover 0 to 524287, which is more than enough for the 64KB SPRAM (0x0000–0xFFFF). Negative values would wrap into the upper address space.
+**Target address range:** 16 bits — covers the entire 64KB code space (0x0000–0xFFFF). The branch instructions use the same 16-bit target field, so call and branch targets are interchangeable.
 
 **Examples:**
 
@@ -566,13 +593,40 @@ call my_function             ; push PC+4, jump to my_function
 call 0x100                   ; push PC+4, jump to address 0x100
 ```
 
-**Calling convention:** There is no hardware-enforced calling convention beyond sp being the stack pointer. Argument passing and register preservation are up to the programmer. The return address is the instruction immediately following the CALL.
-
 **Notes:**
 
 - CALL always uses sp as the stack pointer, regardless of the rd field.
 - Nested calls work naturally: each CALL pushes a return address, and each RET pops one.
-- The maximum callable address using the 20-bit sign-extended payload is 0x7FFFF (524287). Within the 64KB SPRAM this is never a limitation.
+- For function pointers and indirect calls, see `CALLR`.
+
+---
+
+### CALLR (Call Register) — indirect call
+
+**Encoding:** `10101 | rd | -- | - | - | --------------------` (opcode 21)
+
+Indirect call: push (PC + 4) and jump to the address in `rD`. Same stack semantics as `CALL`, but the target comes from a register instead of the immediate field. Unlocks function pointers, dispatch tables, and dynamic linking.
+
+**Operation:**
+
+```
+EXECUTE:
+    sp = sp - 4
+    mem[sp] = PC + 4
+    call_target = (rd == 0) ? 0 : regs[rd]
+
+WB:
+    PC = call_target
+```
+
+**Examples:**
+
+```
+ld.32   r2, #handler         ; load function address into r2
+callr   r2                   ; push PC+4, jump to handler
+```
+
+The C compiler emits `callr` automatically when the call target is a variable rather than a function name — see [cc.md](toolchain/cc.md) for the function-pointer syntax.
 
 ---
 
@@ -630,7 +684,36 @@ jmp 0x100                    ; jump to absolute address
 **Notes:**
 
 - The target is a 16-bit absolute address (0x0000–0xFFFF), the same as any other branch.
-- This is *the* unconditional jump on the MPU; there is no dedicated JMP opcode.
+- This is *the* unconditional jump for compile-time targets. For runtime targets in a register, use `JMPR`.
+
+---
+
+### JMPR (Indirect Jump)
+
+**Encoding:** `10100 | rd | -- | - | - | --------------------` (opcode 20)
+
+Set PC to the value in `rD`. No stack push, no return address. The size, rv, ai, and payload fields are ignored.
+
+**Operation:**
+
+```
+PC = (rd == 0) ? 0 : regs[rd]
+```
+
+**Examples:**
+
+```
+ld.32   r2, #handler         ; load address
+jmpr    r2                   ; PC = handler
+
+ld.32   r2, [r3+8]           ; load address from a dispatch table
+jmpr    r2                   ; tail-call into the handler
+```
+
+**Notes:**
+
+- Useful for tail calls, computed jumps, and switch tables.
+- For an indirect call that *also* pushes a return address, use `CALLR`.
 
 ---
 

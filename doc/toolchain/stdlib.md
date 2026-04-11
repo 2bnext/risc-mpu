@@ -181,4 +181,42 @@ int mv = v * 3300 / 4095;                 // approximate millivolts
 printf("V = %d mV\n", mv);
 ```
 
+### Signed integer math
+
+```c
+int abs(int x);                 // absolute value
+int min(int a, int b);          // signed minimum
+int max(int a, int b);          // signed maximum
+int clamp(int x, int lo, int hi); // signed clamp to [lo, hi]
+int clz(int x);                 // count leading zeros (0..32)
+int isqrt(int x);               // integer square root (unsigned)
+```
+
+Internal signed helpers used by the compilers (not normally called directly):
+
+```c
+int __smul(int a, int b);       // signed multiply
+int __sdiv(int a, int b);       // signed divide (truncate toward zero)
+int __smod(int a, int b);       // signed modulo (sign follows dividend)
+int __sar(int x, int n);        // arithmetic shift right
+```
+
+### IEEE 754 soft-float
+
+Software floating point — no FPU needed. All functions take and return `float` values as raw 32-bit words in `r1`. Denormals are flushed to zero; inf/NaN are not handled.
+
+```c
+float fadd(float a, float b);   // addition
+float fsub(float a, float b);   // subtraction
+float fmul(float a, float b);   // multiplication
+float fdiv(float a, float b);   // division
+int   fcmp(float a, float b);   // compare: returns -1, 0, or +1
+float itof(int x);              // signed int → float
+int   ftoi(float x);            // float → signed int (truncate)
+```
+
+When using `float` variables in the C compiler, `+`/`-`/`*`/`/` and the comparison operators automatically call the corresponding soft-float helpers.
+
+**Not reentrant:** the soft-float routines use global scratch variables internally (`_fa_*`, `_fm_*`). Do not call them from interrupt handlers or nested contexts.
+
 The ADC is a single-bit sigma-delta loop closed by an external RC charge-balancing network: a 10 kΩ resistor from the `adc_out` pin to a summing node, a matching 10 kΩ resistor from the analog input to the same node, a 1–10 nF capacitor from the node to GND, and the node itself wired to `adc_in`. Without that network the value is meaningless. In the simulator (`toolchain/sim.py`), `adc_read` always returns `0x800` (~ half-scale).

@@ -8,8 +8,8 @@ The authoritative source of pin assignments is [`mpu/mpu.pcf`](../mpu/mpu.pcf). 
 
 | MMIO       | Peripheral                                       |
 |------------|--------------------------------------------------|
-| `0xFFFF0000` | UART TX data (write a byte to send)            |
-| `0xFFFF0004` | UART TX status (bit 0 = busy)                  |
+| `0xFFFF0000` | UART TX data (write a byte — pushes into the 16-byte FIFO) |
+| `0xFFFF0004` | UART TX status (bit 0 = FIFO full)             |
 | `0xFFFF0008` | LED register (bit 0 = G, 1 = R, 2 = B)         |
 | `0xFFFF0010` | GPIO data (read = live pin state, write = drives outputs) |
 | `0xFFFF0014` | GPIO direction (1 = output, 0 = input)         |
@@ -42,6 +42,8 @@ The S2 button drops the CPU back into the bootloader so a new `.mpu` can be uplo
 **External hardware:** none. The board has a built-in ESP32-C3 USB-serial bridge running `serialmon` firmware that exposes itself to the host as `/dev/ttyACM1` (Linux) or `COMn` (Windows). 115200 baud, 8-N-1.
 
 **Software:** the bootloader and `flash.py` use UART RX; `printf`, `puts`, `putchar`, and the `__putc` low-level helper all use UART TX. See [stdlib.md](toolchain/stdlib.md).
+
+**Ring buffer:** `uart_tx.v` has a 16-byte FIFO between the CPU and the shift register. The `busy` bit at `0xFFFF0004` now means "FIFO is full" rather than "currently shifting" — the CPU can burst up to 16 bytes at full clock speed without stalling, and only spins when the FIFO actually fills up. At 115200 baud that's ~1.4 ms of buffering. The existing `__putc` busy-wait loop (`ld.8 r4, 0xFFFF0004; bne.8 r4, #0, .wait`) needs no changes — it just almost never trips now.
 
 ---
 

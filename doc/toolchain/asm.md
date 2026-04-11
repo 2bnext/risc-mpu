@@ -90,9 +90,12 @@ The complete instruction list — the assembler accepts both real opcodes and a 
 | `xor`        | real   | Bitwise XOR                                               |
 | `shl`        | real   | Logical shift left                                        |
 | `shr`        | real   | Logical shift right                                       |
+| `asr`        | real   | Arithmetic shift right (sign-fill)                        |
 | `beq` / `bne` / `blt` / `bgt` / `ble` / `bge` | real | Conditional branches (compare `rd` against reg or `#imm`) |
-| `call`       | real   | Push return address, jump                                 |
+| `call`       | real   | Push return address, jump (16-bit absolute target)        |
+| `callr rD`   | real   | Indirect call: push PC+4, jump to address in `rD`         |
 | `ret`        | real   | Pop return address, jump to it                            |
+| `jmpr rD`    | real   | Indirect jump: PC = `rD` (no stack push)                  |
 | `clr rD`     | pseudo | Clear `rD` to zero. Expands to `ld.<sz> rD, r0`. Size suffix is honoured (`.8`/`.16` clear only the low byte/halfword and preserve the upper bits — same size-merge behaviour as `ld`). |
 | `ldi rD, #imm` | pseudo | Load any 32-bit constant into `rD`. Expands to a single `ld.32` if the value fits in the 20-bit signed immediate, otherwise an `ld.32` + `ldh` pair. |
 | `jmp target` | pseudo | Unconditional branch. Expands to `beq.32 r0, #0, target`. |

@@ -72,6 +72,11 @@ module mpu (
     localparam OP_CALL  = 5'b10001;  // 17
     localparam OP_RET   = 5'b10010;  // 18
 
+    // Extended (cheap additions)
+    localparam OP_ASR   = 5'b10011;  // 19  arithmetic shift right (signed)
+    localparam OP_JMPR  = 5'b10100;  // 20  jump to register (PC = rD)
+    localparam OP_CALLR = 5'b10101;  // 21  call register (push PC+4, PC = rD)
+
     // ---- Register file (r0 is hardwired to 0) ----
     reg [31:0] regs [0:7];
 
@@ -253,7 +258,7 @@ module mpu (
                             state    <= S_MEM;
                         end
 
-                        OP_LD, OP_ADD, OP_SUB, OP_AND, OP_OR, OP_XOR, OP_SHL, OP_SHR: begin
+                        OP_LD, OP_ADD, OP_SUB, OP_AND, OP_OR, OP_XOR, OP_SHL, OP_SHR, OP_ASR: begin
                             if (agu_is_imm) begin
                                 if (rd != 0) begin
                                     case (opcode)
@@ -265,6 +270,7 @@ module mpu (
                                         OP_XOR: alu_raw = regs[rd] ^ agu_imm_value;
                                         OP_SHL: alu_raw = regs[rd] << agu_imm_value[4:0];
                                         OP_SHR: alu_raw = regs[rd] >> agu_imm_value[4:0];
+                                        OP_ASR: alu_raw = $signed(regs[rd]) >>> agu_imm_value[4:0];
                                         default: alu_raw = 32'd0;
                                     endcase
                                     regs[rd] <= size_merge(regs[rd], alu_raw, size);
@@ -282,12 +288,30 @@ module mpu (
 
                         OP_CALL: begin
                             // sp -= 4, [sp] = PC+4, jump to target
+                            // Target is the low 16 bits of payload (zero-extended).
                             regs[7]     <= regs[7] - 32'd4;
                             mem_addr    <= regs[7] - 32'd4;
                             mem_wdata   <= pc + 32'd4;
                             mem_size    <= 2'b10;
                             mem_wr      <= 1'b1;
-                            call_target <= {{12{payload[19]}}, payload};
+                            call_target <= {16'd0, payload[15:0]};
+                            state       <= S_MEM;
+                        end
+
+                        OP_JMPR: begin
+                            // PC = rD (indirect jump)
+                            pc    <= (rd == 0) ? 32'd0 : regs[rd];
+                            state <= S_FETCH;
+                        end
+
+                        OP_CALLR: begin
+                            // sp -= 4, [sp] = PC+4, jump to rD
+                            regs[7]     <= regs[7] - 32'd4;
+                            mem_addr    <= regs[7] - 32'd4;
+                            mem_wdata   <= pc + 32'd4;
+                            mem_size    <= 2'b10;
+                            mem_wr      <= 1'b1;
+                            call_target <= (rd == 0) ? 32'd0 : regs[rd];
                             state       <= S_MEM;
                         end
 
@@ -315,7 +339,7 @@ module mpu (
                 // ---- WB: apply mem_rdata result to register file ----
                 S_WB: begin
                     case (opcode)
-                        OP_CALL: begin
+                        OP_CALL, OP_CALLR: begin
                             pc    <= call_target;
                             state <= S_FETCH;
                         end
@@ -343,6 +367,7 @@ module mpu (
                                     OP_XOR: alu_raw = regs[rd] ^ mem_rdata;
                                     OP_SHL: alu_raw = regs[rd] << mem_rdata[4:0];
                                     OP_SHR: alu_raw = regs[rd] >> mem_rdata[4:0];
+                                    OP_ASR: alu_raw = $signed(regs[rd]) >>> mem_rdata[4:0];
                                     default: alu_raw = 32'd0;
                                 endcase
                                 regs[rd] <= size_merge(regs[rd], alu_raw, size);

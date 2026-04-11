@@ -19,15 +19,177 @@ The standard library (`toolchain/stdlib.asm`) is automatically appended to the g
 
 ## Types
 
-| C type   | Size    | Notes                                        |
-|----------|---------|----------------------------------------------|
-| `int`    | 32 bits | Signed                                       |
-| `char`   | 8 bits  | Used for byte loads/stores                   |
-| `void`   | —       | Function return type only                    |
-| pointers | 32 bits | `int *`, `char *`                            |
-| arrays   | n bytes | `char buf[N];` — fixed-size, byte-indexed    |
+| C type     | Size    | ISA suffix | Notes                                     |
+|------------|---------|------------|-------------------------------------------|
+| `int`      | 32 bits | `.32`      | Signed, the default                       |
+| `char`     | 8 bits  | `.8`       | Used for byte loads/stores                |
+| `int8_t`   | 8 bits  | `.8`       | Same as `char`                            |
+| `uint8_t`  | 8 bits  | `.8`       | Same as `char` (signedness not enforced)  |
+| `int16_t`  | 16 bits | `.16`      | Native 16-bit, uses the ISA's `.16` ops   |
+| `uint16_t` | 16 bits | `.16`      | Same width, signedness not enforced        |
+| `int32_t`  | 32 bits | `.32`      | Same as `int`                             |
+| `uint32_t` | 32 bits | `.32`      | Same as `int` (signedness not enforced)   |
+| `void`     | —       | —          | Function return type only                 |
+| pointers   | 32 bits | `.32`      | `int *`, `char *`, `uint8_t *`, etc.      |
+| arrays     | n bytes | `.8`       | `char buf[N];` — fixed-size, byte-indexed |
 
-There is **no** `float`, `double`, `short`, `long`, `struct`, `union`, `enum`, `typedef`, or function pointer support.
+These are first-class types, not aliases — the compiler emits `ld.8`, `st.8` for 8-bit types, `ld.16`, `st.16` for 16-bit types, and `ld.32`, `st.32` for 32-bit types. This maps directly to the MPU's three ISA size suffixes.
+
+All types use 4-byte stack slots (locals are always word-aligned). Sub-word loads are zero-extended: the compiler clears the destination register before a `.8` or `.16` load to avoid the ISA's size-merge gotcha. There is no sign extension on load — `int8_t` and `uint8_t` behave identically at the load level, as do `int16_t` and `uint16_t`.
+
+Arithmetic is always 32-bit — the truncation to the declared width happens at store time and at the next load. This matches C's integer promotion rules.
+
+No `#include` is needed for the `stdint`-style names — they are built-in keywords.
+
+### Float support
+
+The `float` type is IEEE 754 single-precision (32 bits). All arithmetic is implemented in software via the standard library's soft-float routines — there is no FPU.
+
+```c
+float pi = 3.14159;
+float area = pi * 5.0 * 5.0;    // calls fmul
+float half = area / 2.0;         // calls fdiv
+int rounded = ftoi(half);         // float → int
+float back = itof(rounded);      // int → float
+```
+
+The operators `+`, `-`, `*`, `/` on float values automatically call `fadd`, `fsub`, `fmul`, `fdiv`. Comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) call `fcmp`. Float literals like `3.14` are encoded as IEEE 754 bit patterns at compile time.
+
+Explicit conversion functions:
+- `itof(x)` — signed int → float
+- `ftoi(x)` — float → signed int (truncates toward zero)
+- `fcmp(a, b)` — returns -1, 0, or +1
+
+Limitations:
+- **No `printf("%f")`** — use `ftoi()` and print the integer part, or scale and print digits manually.
+- **Denormals are flushed to zero.** Inf and NaN are not handled.
+- **Rounding is truncation**, not round-to-nearest. Results may be off by 1 ULP.
+- **The soft-float routines are not reentrant** (they use global scratch variables).
+- **No `double`** — only single-precision `float`.
+
+The C-standard integer type modifiers are supported as built-in keywords:
+
+| Type              | Size    | ISA suffix | Notes                              |
+|-------------------|---------|------------|------------------------------------|
+| `short`           | 16 bits | `.16`      | Same as `int16_t`                  |
+| `unsigned short`  | 16 bits | `.16`      | Same as `uint16_t`                 |
+| `long`            | 32 bits | `.32`      | Same as `int` (no 64-bit support)  |
+| `unsigned long`   | 32 bits | `.32`      | Same as `unsigned int`             |
+| `unsigned int`    | 32 bits | `.32`      | Signedness not enforced            |
+| `unsigned char`   | 8 bits  | `.8`       | Same as `uint8_t`                  |
+| `signed`          | 32 bits | `.32`      | Same as `int`                      |
+| `unsigned`        | 32 bits | `.32`      | Same as `unsigned int`             |
+
+Compound forms like `unsigned short int`, `signed long int` are accepted (the trailing `int` is optional, matching C). `signed` and `unsigned` without a following type default to `int`.
+
+There is **no** `double`, `enum`, or `typedef` support, and no proper `void (*)()` syntax for function-pointer types — but function pointers themselves are supported via `int` variables and the `&funcname` operator. See **Function pointers** below.
+
+## Function pointers
+
+The MPU's `callr` instruction makes function pointers cheap. The C compiler doesn't support the `void (*fp)()` declaration syntax, but you can store function addresses in `int` variables and call through them — the compiler emits `callr` automatically when the call target is a variable rather than a function name.
+
+```c
+int square(int x) { return x * x; }
+int cube(int x)   { return x * x * x; }
+
+void main() {
+    int fp;
+    fp = &square;          // store function address
+    int a = fp(5);         // indirect call → uses callr
+    fp = &cube;
+    int b = fp(3);
+
+    // Dispatch table
+    int ops[2];
+    ops[0] = &square;
+    ops[1] = &cube;
+    int r = ops[0](7);
+}
+```
+
+`&funcname` evaluates to the 16-bit code address of the function. The compiler tracks all function names and emits a `call` for direct calls (target known at compile time) or a `callr` for indirect calls (target loaded from a variable). The runtime cost is one extra `ld.32` to load the pointer into a register before the indirect call.
+
+Caveats:
+- No type checking on function pointers — the variable type is just `int`.
+- No `void (*)(int)` syntax. Don't try to declare them.
+- No `(int)&funcname` cast — the `&` is enough since everything is untyped at the variable level.
+
+## Structs
+
+```c
+struct point {
+    int x;
+    int y;
+};
+
+struct sensor {
+    int id;
+    int16_t temp;
+    uint8_t status;
+};
+
+void main() {
+    struct point p;
+    p.x = 10;
+    p.y = 20;
+
+    struct point *q = &p;
+    q->x = 99;                  // arrow access
+
+    struct point pts[3];        // array of structs
+    pts[0].x = 1;
+    pts[2].y = 42;
+}
+```
+
+Structs use bit-perfect layout with natural alignment — each field is aligned to `min(field_size, 4)` bytes, and the total struct size is padded to 4-byte alignment. Fields can be any type including other structs, pointers, floats, and fixed-size arrays (`int buf[8]`).
+
+- `.` (member access) and `->` (pointer-to-member access) are both supported.
+- `&s` takes the address of a struct; `struct point *p` declares a pointer to one.
+- Struct values on the stack are passed by address — `printf` and other functions receive the address, not a copy.
+- Structs cannot be assigned as a whole (`p = q` does not copy); assign fields individually.
+- No nested struct *definitions* (but a struct field can be a pointer to another struct type).
+
+## Unions
+
+```c
+union reg32 {
+    int i;
+    float f;
+    uint8_t bytes[4];
+};
+
+void main() {
+    union reg32 r;
+    r.f = 3.14;
+    printf("float bits = %d\n", r.i);   // type-punning: same memory
+    r.i = 0;
+    r.bytes[0] = 0xAA;
+    printf("int = %d\n", r.i);          // reads 170 (0xAA in byte 0)
+}
+```
+
+Unions use the same syntax as structs but all fields share offset 0. The size of the union is the size of its largest field, padded to 4-byte alignment. Member access uses `.` and `->` just like structs. Union pointers work the same way.
+
+This gives you bit-perfect type punning — write as `float`, read as `int` to inspect the IEEE 754 bits, or write as `int` and read individual bytes.
+
+## Arrays
+
+```c
+int arr[10];                     // 10 ints (40 bytes, element size 4)
+float vals[4];                   // 4 floats (16 bytes)
+uint8_t buf[32];                 // 32 bytes
+struct point pts[5];             // 5 structs (40 bytes if struct point is 8)
+
+arr[0] = 42;
+int x = arr[3];
+vals[1] = 3.14;
+pts[2].x = 100;
+```
+
+Arrays are fixed-size, declared with `type name[N]`. Element access `arr[i]` automatically scales the index by the element size — `int arr[10]` scales by 4, `uint8_t buf[32]` scales by 1, `struct point pts[5]` scales by `sizeof(struct point)`. Both local and global arrays are supported.
+
+Array names evaluate to the base address (like C pointers). You can pass an array to a function that takes a pointer parameter.
 
 ## Declarations
 
