@@ -57,7 +57,7 @@ toolchain/
   basic.py       Tiny BASIC compiler -> .mpu
   pas.py         Tiny Pascal compiler with real procedures/functions -> .mpu
   sim.py         Cycle-accurate simulator (--trace, --max-cycles, fake BME280 on the I²C bus)
-  flash.py       Uploads .mpu binaries to the board via UART (--now skips the S2 prompt, --monitor opens a serial monitor after upload)
+  flash.py       Uploads .mpu binaries to the board via UART (--now skips the S2 prompt, --monitor opens a serial monitor after upload, --chunk=N and --delay=MS tune the upload pacing)
   stdlib.asm     Standard library (printf, putchar, puts, sleep, setleds, gpio_*, i2c_*, adc_read, ...)
 ```
 

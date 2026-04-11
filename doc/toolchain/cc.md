@@ -239,7 +239,16 @@ Blocks use `{ ... }`. The semicolon-as-statement-terminator rule is the usual on
 
 `++` and `--` are supported only in *postfix* form and have pre-increment value semantics — fine for `for` updates and statement-level use, but don't embed them in larger expressions and expect the C definition.
 
-`/` and `%` lower to calls on the unsigned helpers `__div` / `__mod`. They produce wrong results for negative operands — keep arithmetic non-negative if you care about correctness.
+`/` and `%` lower to calls on the signed helpers `__sdiv` / `__smod`, which sign-adjust the unsigned `__div`/`__mod` primitives. They handle negative operands correctly: `__sdiv` truncates toward zero (C semantics) and `__smod` follows the dividend's sign.
+
+`>>` defaults to **arithmetic** shift (`asr`) on signed operands and **logical** shift (`shr`) on unsigned operands — matching C's signed/unsigned distinction. Declare your operand as `unsigned int` / `uint32_t` if you need zero-fill behaviour.
+
+```c
+int   s = -100;
+int   a = s >> 2;        // -25 (asr — sign bit fills in)
+unsigned int u = -1;
+int   b = u >> 4;        // 0x0FFFFFFF (shr — zero fills in)
+```
 
 ## Functions
 
@@ -287,28 +296,27 @@ For pointer arithmetic on words, do it manually with `int *` and explicit offset
 
 The standard library (`toolchain/stdlib.asm`) is appended to every compiled program automatically. Notable functions:
 
-| Function                       | Purpose                                                  |
-|--------------------------------|----------------------------------------------------------|
-| `putchar(c)` / `puts(s)` / `printf(...)` | UART output                                    |
-| `setleds(value)`               | RGB LED on `0xFFFF0008` (bit 0 G, 1 R, 2 B)              |
-| `sleep(iters)`                 | Busy-wait (≈ 3000 iterations per ms at 12 MHz)           |
-| `gpio_set_dir(mask)`           | GPIO direction at `0xFFFF0014` (1 = output)              |
-| `gpio_write(value)`            | GPIO output data at `0xFFFF0010`                         |
-| `gpio_read()`                  | Live GPIO pin state, low 8 bits                          |
-| `i2c_start()` / `i2c_stop()`   | I²C START / STOP                                         |
-| `i2c_write(byte)`              | Shift out one byte; returns 0 = ACK, non-zero = NACK     |
-| `i2c_read(nack)`               | Shift in one byte; `nack=1` for the last byte before STOP |
-| `adc_read()`                   | Sigma-delta ADC sample at `0xFFFF0020`, 12 bits (0..4095) |
+| Category   | Functions                                                                                   |
+|------------|---------------------------------------------------------------------------------------------|
+| I/O        | `putchar`, `puts`, `printf`, `sleep`, `setleds`                                             |
+| Integer    | `abs`, `min`, `max`, `clamp`, `clz`, `isqrt`                                                |
+| GPIO       | `gpio_set_dir`, `gpio_write`, `gpio_read`                                                   |
+| I²C        | `i2c_start`, `i2c_stop`, `i2c_write`, `i2c_read`                                            |
+| ADC        | `adc_read` (raw 0..4095), `adc_readf` (normalised to `[-1.0, +1.0]`)                        |
+| Float core | `fadd`, `fsub`, `fmul`, `fdiv`, `fcmp`, `itof`, `ftoi`, `fabs`, `fneg`, `fsign`             |
+| Float math | `fsqrt`, `fhypot`, `fsin`, `fcos`, `ftan`, `fatan`, `fatan2`, `fasin`, `facos`              |
+| Angles     | `fdeg2rad`, `frad2deg`                                                                      |
+| Utility    | `fmin`, `fmax`, `fclamp`, `flerp`, `ffloor`, `fceil`                                        |
 
-The GPIO/I²C peripherals require external hardware: I²C needs 2.2 kΩ–10 kΩ pull-ups on SCL and SDA, and the GPIO pins are bare iCE40 pads. See [stdlib.md](stdlib.md) for the calling-convention details, the underlying MMIO protocol, and the ADC's external RC network.
+The GPIO/I²C peripherals require external hardware: I²C needs 2.2 kΩ–10 kΩ pull-ups on SCL and SDA, and the GPIO pins are bare iCE40 pads. See [stdlib.md](stdlib.md) for per-function signatures, semantics, accuracy notes, the underlying MMIO protocols, and the ADC's external RC network.
 
 A complete I²C example lives at [`testing/bme280demo.c`](../../testing/bme280demo.c).
 
 ## What is missing
 
-- Floating point, `double`, `short`, `long`, `unsigned`
-- `struct`, `union`, `enum`, `typedef`
-- Function pointers
+- `double` (only single-precision `float`)
+- `enum`, `typedef`
+- Proper function-pointer *type syntax* (`void (*fp)(int)`) — function pointers themselves work, stored as `int`; see **Function pointers** above
 - The preprocessor (`#include`, `#define`, `#ifdef`, …) — there is no preprocessor at all
 - `switch` / `case`
 - `do { } while ()`

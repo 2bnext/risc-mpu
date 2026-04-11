@@ -181,42 +181,111 @@ int mv = v * 3300 / 4095;                 // approximate millivolts
 printf("V = %d mV\n", mv);
 ```
 
+### adc_readf
+
+```c
+float adc_readf(void);
+```
+
+Float-valued wrapper around `adc_read`. Returns the latest ADC sample as a `float` normalised to the range `[-1.0, +1.0]` — `0` → `-1.0`, `2048` → `0.0`, `4095` → `+1.0`. Convenient for audio or control-loop code that wants a zero-centred signed value. In the simulator this always returns approximately `0.0` because the simulated ADC returns half-scale (`0x800`).
+
 ### Signed integer math
 
 ```c
-int abs(int x);                 // absolute value
-int min(int a, int b);          // signed minimum
-int max(int a, int b);          // signed maximum
+int abs(int x);                   // absolute value
+int min(int a, int b);            // signed minimum
+int max(int a, int b);            // signed maximum
 int clamp(int x, int lo, int hi); // signed clamp to [lo, hi]
-int clz(int x);                 // count leading zeros (0..32)
-int isqrt(int x);               // integer square root (unsigned)
+int clz(int x);                   // count leading zeros (0..32)
+int isqrt(int x);                 // integer square root (unsigned)
 ```
 
 Internal signed helpers used by the compilers (not normally called directly):
 
 ```c
-int __smul(int a, int b);       // signed multiply
-int __sdiv(int a, int b);       // signed divide (truncate toward zero)
-int __smod(int a, int b);       // signed modulo (sign follows dividend)
-int __sar(int x, int n);        // arithmetic shift right
+int __smul(int a, int b);         // signed multiply
+int __sdiv(int a, int b);         // signed divide (truncate toward zero)
+int __smod(int a, int b);         // signed modulo (sign follows dividend)
+int __sar(int x, int n);          // arithmetic shift right (wraps asr)
 ```
 
 ### IEEE 754 soft-float
 
-Software floating point — no FPU needed. All functions take and return `float` values as raw 32-bit words in `r1`. Denormals are flushed to zero; inf/NaN are not handled.
+Software floating point — no FPU needed. All functions take and return `float` values as raw 32-bit words in `r1`. Denormals are flushed to zero; inf/NaN are not handled. Mantissa rounding is truncation, so results may be off by 1 ULP.
+
+#### Core arithmetic
 
 ```c
-float fadd(float a, float b);   // addition
-float fsub(float a, float b);   // subtraction
-float fmul(float a, float b);   // multiplication
-float fdiv(float a, float b);   // division
-int   fcmp(float a, float b);   // compare: returns -1, 0, or +1
-float itof(int x);              // signed int → float
-int   ftoi(float x);            // float → signed int (truncate)
+float fadd(float a, float b);     // a + b
+float fsub(float a, float b);     // a - b
+float fmul(float a, float b);     // a * b
+float fdiv(float a, float b);     // a / b
+int   fcmp(float a, float b);     // -1 if a<b, 0 if a==b, +1 if a>b
+float itof(int x);                // signed int -> float
+int   ftoi(float x);              // float -> signed int (truncate toward zero)
 ```
 
 When using `float` variables in the C compiler, `+`/`-`/`*`/`/` and the comparison operators automatically call the corresponding soft-float helpers.
 
-**Not reentrant:** the soft-float routines use global scratch variables internally (`_fa_*`, `_fm_*`). Do not call them from interrupt handlers or nested contexts.
+#### Sign and magnitude
+
+```c
+float fabs(float x);              // |x| — clears the sign bit
+float fneg(float x);              // -x  — flips the sign bit
+float fsign(float x);             // -1.0, 0.0, or +1.0
+```
+
+`fabs` and `fneg` are pure bitfield twiddles — no arithmetic cost.
+
+#### Square root and hypotenuse
+
+```c
+float fsqrt(float x);             // Newton iteration, 2 steps from isqrt seed
+float fhypot(float a, float b);   // sqrt(a*a + b*b)
+```
+
+`fsqrt` seeds itself from `isqrt(ftoi(x))` converted back via `itof`, then runs two unrolled Newton iterations (`y = (y + x/y) / 2`). This is exact for perfect squares in the `int` range and within ~0.1% for non-squares. `fsqrt(0)` returns 0; negative inputs return 0.
+
+#### Trigonometry
+
+```c
+float fsin(float x);              // sin(x), full range via modulo reduction
+float fcos(float x);              // cos(x) = fsin(x + pi/2)
+float ftan(float x);              // fsin(x) / fcos(x)
+float fatan(float x);             // single-arg arctangent
+float fatan2(float y, float x);   // two-arg arctangent, returns [-pi, pi]
+float fasin(float x);             // arcsine, input in [-1, 1]
+float facos(float x);             // arccosine, input in [-1, 1]
+```
+
+`fsin`/`fcos` use the Bhaskara polynomial `sin(x) ≈ 16x(pi−x) / (5·pi² − 4x(pi−x))` over `[0, pi]`, extended to the full range via symmetry and modulo `2·pi`. Accuracy is ~0.001 for most inputs.
+
+`fatan2` uses the rational approximation `atan(z) ≈ z / (1 + 0.28125·z²)` with quadrant adjustment based on the sign bits of `x` and `y` — max error ~1% for `|z| ≤ 1`. `fatan`, `fasin`, and `facos` are thin wrappers around `fatan2`: `fatan(x) = fatan2(x, 1)`, `fasin(x) = fatan2(x, sqrt(1−x²))`, `facos(x) = pi/2 − fasin(x)`.
+
+**Performance note:** every trig call is hundreds of thousands of soft-float cycles. A single `fsin` takes several milliseconds of simulated time at 12 MHz. Fine for control loops and demos; not a replacement for an FPU.
+
+#### Angle conversion
+
+```c
+float fdeg2rad(float x);          // x * (pi/180)
+float frad2deg(float x);          // x * (180/pi)
+```
+
+Each is a single `fmul` against a precomputed constant.
+
+#### Comparison and interpolation utilities
+
+```c
+float fmin(float a, float b);                  // smaller
+float fmax(float a, float b);                  // larger
+float fclamp(float x, float lo, float hi);     // max(lo, min(x, hi))
+float flerp(float a, float b, float t);        // a + t*(b - a)
+float ffloor(float x);                         // round toward -inf
+float fceil(float x);                          // round toward +inf
+```
+
+These are all cheap (1–4 soft-float calls each) and are the fast path if you just need the bulk-data operations without the trig.
+
+**Not reentrant:** all soft-float routines use global scratch variables internally (`_fa_*`, `_fm_*`, `_gm_tmp*`). Do not call them from interrupt handlers or nested contexts.
 
 The ADC is a single-bit sigma-delta loop closed by an external RC charge-balancing network: a 10 kΩ resistor from the `adc_out` pin to a summing node, a matching 10 kΩ resistor from the analog input to the same node, a 1–10 nF capacitor from the node to GND, and the node itself wired to `adc_in`. Without that network the value is meaningless. In the simulator (`toolchain/sim.py`), `adc_read` always returns `0x800` (~ half-scale).
