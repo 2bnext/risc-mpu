@@ -6,7 +6,7 @@ The ISA has a truly 68K feel, especially with the pseudo opcodes.
 
 There are microcontroller style peripherals: gpio, i2c, adc and a uart for monitoring.
 
-I designed the MPU ISA and initial Verilog implementation. Because my spare time is limited, I used Claude 3.5/4 to build the full toolchain (assembler, linker, C compiler, BASIC, Pascal, and floating-point library) and the documentation. I reviewed, debugged, and iterated on everything. The result is a complete, usable softcore system.
+I designed the MPU ISA and initial Verilog implementation. Because my spare time is limited, I used Claude to build much of the full toolchain (assembler, linker, C compiler, BASIC, Pascal, and floating-point library) and the documentation. I reviewed, debugged, and iterated on everything. The result is a complete, usable softcore system.
 
 ## Architecture
 
