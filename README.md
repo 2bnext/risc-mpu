@@ -4,7 +4,7 @@ A 32-bit RISC processor with a custom instruction set, built from scratch in Ver
 
 The ISA has a truly 68K feel, especially with the pseudo opcodes.
 
-**The ISA and initial verilog files are 100% designed and created by me, without a.i.** 
+**The ISA and initial verilog files are 100% designed and created by me, without a.i.**\n
 Claude has at later stage been used for debugging, documentation and the toolchain so I could get my ideas implemented very rapidly.
 
 There are microcontroller style peripherals: gpio, i2c, adc and a uart for monitoring.
