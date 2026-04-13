@@ -12,7 +12,7 @@ There are microcontroller style peripherals: gpio, i2c, adc and a uart for monit
 
 - **32-bit fixed-width instructions** with a uniform encoding: 5-bit opcode, 3-bit register, 2-bit size, and a 20-bit payload
 - **8 registers** — `r0` is hardwired to zero (the classic RISC trick), `r7` is aliased as `sp` (the stack pointer). The other six are general-purpose. Having `r0 = 0` available everywhere gives you a free zero immediate, an unconditional branch (`jmp target`), a register clear (`clr rD`), and a "no base / no index" placeholder inside every AGU operand — without burning an opcode bit on any of them.
-- **19 instructions**: LD, LDH, ST, ADD, SUB, AND, OR, XOR, SHL, SHR, 6 branches, CALL, RET, NOP
+- **21 instructions**: LD, LDH, ST, ADD, SUB, AND, OR, XOR, SHL, SHR, ASR, 6 branches, CALL, RET, JMP, NOP
 - **Address Generation Unit (AGU)** shared by 9 instructions, providing register-direct, immediate, absolute, indexed, indexed+offset, and post-increment addressing modes
 - **5-stage state machine**: FETCH, DECODE, EXECUTE, MEM, WB
 - **64 KB SPRAM** for program and data (unified memory)
@@ -57,7 +57,7 @@ toolchain/
   basic.py       Tiny BASIC compiler -> .mpu
   pas.py         Tiny Pascal compiler with real procedures/functions -> .mpu
   sim.py         Cycle-accurate simulator (--trace, --max-cycles, fake BME280 on the I²C bus)
-  flash.py       Uploads .mpu binaries to the board via UART (--now skips the S2 prompt, --monitor opens a serial monitor after upload)
+  flash.py       Uploads .mpu binaries to the board via UART (--now skips the S2 prompt, --monitor opens a serial monitor after upload, --chunk=N and --delay=MS tune the upload pacing)
   stdlib.asm     Standard library (printf, putchar, puts, sleep, setleds, gpio_*, i2c_*, adc_read, ...)
 ```
 

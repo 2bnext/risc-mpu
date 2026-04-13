@@ -14,7 +14,26 @@ A handcrafted 32-bit soft-core CPU ("MPU") for the iCESugar 1.5 board (Lattice i
 - A small standard library written in MPU assembly.
 - Documentation in `doc/` aimed at being readable as a booklet, plus per-tool reference pages in `doc/toolchain/`.
 
-The project is tagged **v0.1** as a "finished" milestone — fully working hardware plus four language front-ends (asm/C/BASIC/Pascal) all targeting the same `.mpu` binary format. A successor on the Alchitry Au (Artix-7) is planned for hardware FP, but this repo is the iCESugar version.
+The project is at **v0.3**. A successor on the Alchitry Au (Artix-7) is planned for hardware FP, but this repo is the iCESugar version.
+
+### Version history
+
+**v0.3** (current) — ISA refinement, C preprocessor, hardware fixes.
+- **ISA**: `call` and `jmp` now use the AGU — all addressing modes work (`call label`, `call r2`, `call [r2+4]`). `callr`/`jmpr` dropped. Branches are now PC-relative (16-bit signed offset). Total: **21 opcodes** (opcode 21 is free).
+- **C compiler**: `#include "file"` with circular-include guard; `#define`/`#undef`/`#ifdef`/`#ifndef`/`#else`/`#endif`; `0b` binary literals; `_` digit separators in all numeric constants; function prototypes accepted (declaration without body); clean error messages instead of tracebacks; fixed sub-word array load bug (pre-clear clobbered the AGU base register).
+- **Stdlib**: `sprintf(buf, fmt, ...)` — same format engine as printf, writes to a buffer.
+- **Verilog**: ADC saturates at 4095 instead of wrapping to 0 at full scale; UART TX and LED MMIO address decode widened from `[3:0]` to `[7:0]` (GPIO/I²C writes no longer ghost-fire UART bytes or LEDs); GPIO pins remapped to P36–P46.
+- **New files**: `ssd1306.h` (OLED driver), `bme280.h` (sensor driver), `stdlib.h` (function reference), `bme280displayed.c` (weather station on OLED), `adcpwm.c`, `ssd1306test.c`, `blink.c`.
+
+**v0.2** — geometric math, soft-float bug fixes, new opcodes.
+- ISA: added `asr` (opcode 19). `jmpr`/`callr` were introduced but later folded into AGU-based `jmp`/`call` in v0.3.
+- Assembler: pseudo-ops (`jmp`, `push`, `pop`, `clr`, `ldi`), `r0` hiding, peephole rewriters.
+- C compiler: function pointers, signed `>>` defaults to `asr`, struct/union/array support.
+- Stdlib: 14 new geometric/math functions (`ftan`, `fatan`, `fasin`, `facos`, `fhypot`, `fdeg2rad`, `frad2deg`, `fmin`, `fmax`, `fclamp`, `fsign`, `flerp`, `ffloor`, `fceil`). Fixed critical bugs in `fsqrt` and `fatan2`.
+- Verilog: `uart_tx` 16-byte FIFO. `flash.py` chunked upload (`--chunk=N --delay=MS`).
+- Tests: `stdlibtest.c` (65 checks), `geomtest.c` (61 checks).
+
+**v0.1** — first "finished" milestone. Working hardware, four language front-ends (asm/C/BASIC/Pascal), `.mpu` binary format.
 
 ## Repository layout
 
@@ -79,31 +98,39 @@ C programs put locals on the stack, globals in a data section after code; the he
 
 All instructions are 32-bit. Every memory/ALU operation funnels through the AGU, which produces either an immediate or an effective address. Sub-word loads (`ld.8`, `ld.16`) **size-merge** into the destination register: only the low byte/halfword is overwritten, upper bits are preserved. This bites you if you forget to zero the destination first.
 
-Branches compare an `rd` register against either a 3-bit immediate or another register, in `.8`/`.16`/`.32` widths.
+Branches compare an `rd` register against either a 3-bit immediate or another register, in `.8`/`.16`/`.32` widths. Branch targets are PC-relative (16-bit signed offset). `call` and `jmp` use the AGU, so they accept any addressing mode (label, register, memory-indirect).
+
+21 native opcodes (0-20, slot 21 free):
+- 0 NOP, 1 LD, 2 LDH, 3 ST
+- 4 ADD, 5 SUB
+- 6-11 BEQ/BNE/BLT/BGT/BLE/BGE
+- 12 AND, 13 OR, 14 XOR, 15 SHL, 16 SHR
+- 17 CALL (via AGU), 18 RET
+- 19 ASR, 20 JMP (via AGU)
 
 The full ISA is in [ISA.md](ISA.md).
 
 ## Toolchain
 
 - **`toolchain/asm.py`** — two-pass assembler. Labels can be global (no leading dot) or local (`.foo`, scoped to the most recent global label). Reads `.asm`, writes `.mpu` binary. Documented in [toolchain/asm.md](toolchain/asm.md).
-  - **Pseudo-instructions**: `jmp target` → `beq.32 r0,#0,target`; `clr[.sz] rD` → `ld.<sz> rD, r0` (default `.32`; `.8`/`.16` size-merge clears); `pop rN` → `ld.32 rN, [sp+=4]`; `push rN` → `sub.32 sp,#4 ; st.32 [sp], rN`; `ldi rD, #imm` → either `ld.32 rD, #imm` (if it fits in 20-bit signed) or `ld.32 rD, #low20 ; ldh rD, #high20` (otherwise). `push` and `ldi` are the variable-length pseudos, expanded by `expand_pseudos()` before pass 1; labels may be attached to either. `to_pseudo_ops()` rewrites compiler-emitted `ld.<sz> rD, r0` as `clr.<sz> rD` and preserves the size suffix end-to-end. All three high-level compilers emit `ldi` for every numeric literal — they no longer carry their own 20-bit-fits-or-not logic. There is no `mov`/`mv` pseudo — `ld.32 rD, rS` is already the canonical register-to-register move (AGU mode 00 makes the source register the operand).
+  - **Pseudo-instructions**: `clr[.sz] rD` → `ld.<sz> rD, r0` (default `.32`; `.8`/`.16` size-merge clears); `pop rN` → `ld.32 rN, [sp+=4]`; `push rN` → `sub.32 sp,#4 ; st.32 [sp], rN`; `ldi rD, #imm` → either `ld.32 rD, #imm` (if it fits in 20-bit signed) or `ld.32 rD, #low20 ; ldh rD, #high20` (otherwise). `push` and `ldi` are the variable-length pseudos, expanded by `expand_pseudos()` before pass 1; labels may be attached to either. `jmp` is a real opcode (20) using the AGU — not a pseudo any more. `to_pseudo_ops()` rewrites compiler-emitted `ld.<sz> rD, r0` as `clr.<sz> rD` and preserves the size suffix end-to-end. All three high-level compilers emit `ldi` for every numeric literal. There is no `mov`/`mv` pseudo — `ld.32 rD, rS` is already the canonical register-to-register move (AGU mode 00 makes the source register the operand).
   - **r0-implicit AGU shorthand**: anywhere `r0` would appear as the bookkeeping slot of an AGU operand it can be elided. `[sp+=4]` ≡ `[r0][sp+=4]`, `[r6++]` ≡ `[r0][r6+=1]`, `[sp+8]` ≡ `[r0][sp+8]`, `[reg]` ≡ `[r0][reg]` (mode 01). The verbose form is still accepted for compat, but nothing in the toolchain output emits it.
   - **Surface-syntax rewriters**: `to_pseudo_ops(asm_text)` rewrites compiler-style native sequences → push/pop/clr; `hide_r0(asm_text)` strips `[r0]` from AGU operands. Both are textual peepholes that produce semantically identical output. All three compilers run their generated asm through `to_pseudo_ops()` then `hide_r0()` before assembling and before writing the `-S` listing. `stdlib.asm` was rewritten with the same passes and now uses pseudo-ops and the r0-implicit shorthand directly.
 
 - **`toolchain/sim.py`** — cycle-level simulator. `--trace` prints every instruction; `--max-cycles=N` (default 1,000,000) caps runaway loops. Stops with `Halted: max cycles` if the program loops forever (commonly because it reached the `__halt: jmp __halt` at the end). Includes a **fake BME280** at I²C address `0x76` so the bme280demo programs run end-to-end against a known reference (15 °C, 1013.25 hPa, 0 % RH). Documented in [toolchain/sim.md](toolchain/sim.md).
 
-- **`toolchain/cc.py`** — C-like compiler. Documented in [toolchain/cc.md](toolchain/cc.md). Notable: `*`, `/`, `%` lower to runtime calls (`__mul`, `__div`, `__mod`, all unsigned). No preprocessor, no float, no struct. Outputs `.mpu` directly; pass `-S` to also keep the intermediate `.s`.
+- **`toolchain/cc.py`** — C-like compiler. Documented in [toolchain/cc.md](toolchain/cc.md). Has `#include`, `#define`/`#ifdef`/`#ifndef`/`#endif`, `float`, `struct`, `union`, arrays, function pointers, `0b` binary literals, `_` digit separators, `>>` sign-aware (asr for signed, shr for unsigned). `*`/`/`/`%` lower to signed runtime calls. Outputs `.mpu` directly; pass `-S` to also keep the intermediate `.s`.
 
 - **`toolchain/basic.py`** — Tiny BASIC compiler. Documented in [toolchain/basic.md](toolchain/basic.md). Heap, string vars, `MALLOC`/`PEEK`/`POKE`, `+`/`=`/`<>` on strings, `*` and `/` via runtime helpers. Has been extended over time with: hex literals (`0x..`), bitwise ops (`<<`, `>>`, `~`/`NOT`, `AND`/`OR` are bitwise), `SAR(x, n)` for arithmetic shift right, `SLEEP n`, the `I2C*` builtins, the `GPIO*` builtins, `SETLEDS n`, and `ADCREAD()`. The compiler emits `ld + ldh` for constants outside the 20-bit immediate range — without this, anything ≥ 524288 silently truncated (the bug that broke the BME280 port until it was found).
 
 - **`toolchain/pas.py`** — Tiny Pascal compiler. Documented in [toolchain/pas.md](toolchain/pas.md). The big thing Pascal adds over BASIC is **real procedures and functions with value parameters and proper stack frames** — the same calling convention as `cc.py`. Pascal is case-insensitive (the tokenizer lowercases all identifiers) and has the same set of GPIO/I²C/ADC/LED/`sleep`/`peek`/`poke`/`sar` builtins as BASIC, plus `writeln`/`write`/`exit` as language built-ins. Function calls use a defer-and-replay trick: argument expressions are scanned to find their token ranges, then re-parsed in reverse to push right-to-left. A `temp_depth` counter on the compiler tracks expression-temp pushes so variable accesses through `[sp+offset]` stay correct when intermediates are sitting on top of the frame.
 
-- **`toolchain/flash.py`** — uploads a `.mpu` to the bootloader over UART. Default port `/dev/ttyACM1`, 115200 baud. Prompts the user to press the S2 button (FPGA reset) before uploading; pass `--now` to skip the prompt when the board is already in bootloader state. Pass `--monitor` to keep the serial port open after upload and stream device output until Ctrl-C.
+- **`toolchain/flash.py`** — uploads a `.mpu` to the bootloader over UART. Default port `/dev/ttyACM1`, 115200 baud. Prompts the user to press the S2 button (FPGA reset) before uploading; pass `--now` to skip the prompt when the board is already in bootloader state. Pass `--monitor` to keep the serial port open after upload and stream device output until Ctrl-C. Pass `--chunk=N --delay=MS` to tune the chunked upload pacing — default is 8 bytes per 1 ms chunk, which is reliable for 14 KB+ binaries but slow; raise the chunk size or lower the delay for faster small-binary uploads if your USB path can handle it. The chunked-send workaround exists because the bootloader has zero margin on back-to-back bytes at 115200 baud.
 
 - **All toolchain scripts** (`asm.py`, `cc.py`, `basic.py`, `pas.py`, `sim.py`, `flash.py`) accept the input filename without an extension and append the obvious one (`.asm`/`.c`/`.bas`/`.pas`/`.mpu`). All three high-level compilers support `-S` to keep the intermediate `.s` file. All tools print a clean `error: input file not found` message and exit 1 instead of dumping a Python traceback when the input is missing.
 
 - **`toolchain/stdlib.asm`** — appended automatically by `cc.py`, `basic.py`, and `pas.py`. Provides:
-  - I/O: `__putc` (internal), `putchar`, `puts`, `printf` (`%d %x %s %c %%`), `setleds`, `sleep`
+  - I/O: `__putc` (internal), `putchar`, `puts`, `printf` (`%d %x %s %c %%`), `sprintf`, `setleds`, `sleep`
   - GPIO: `gpio_set_dir`, `gpio_write`, `gpio_read`
   - I²C: `i2c_start`, `i2c_stop`, `i2c_write` (returns ACK), `i2c_read` (takes ACK polarity), `__i2c_wait` (internal busy spin)
   - ADC: `adc_read`

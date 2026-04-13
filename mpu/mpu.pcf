@@ -6,16 +6,15 @@ set_io uart_tx 4
 set_io uart_rx 6
 set_io btn_s2  18
 
-# GPIO[0..7] — placeholder pins. Edit these to match the PMOD header you
-# want to use on your iCESugar 1.5. Any 8 free package pins will do.
-set_io gpio[0] 9
-set_io gpio[1] 10
-set_io gpio[2] 11
-set_io gpio[3] 12
-set_io gpio[4] 19
-set_io gpio[5] 20
-set_io gpio[6] 21
-set_io gpio[7] 23
+# GPIO[0..7] — directly accessible iCESugar 1.5 header pins.
+set_io gpio[0] 36
+set_io gpio[1] 37
+set_io gpio[2] 38
+set_io gpio[3] 42
+set_io gpio[4] 43
+set_io gpio[5] 44
+set_io gpio[6] 45
+set_io gpio[7] 46
 
 # I2C — placeholder pins. External pull-ups (2.2–10 kΩ) required.
 set_io i2c_scl 25

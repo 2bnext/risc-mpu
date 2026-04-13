@@ -14,22 +14,24 @@ OPCODES = {
     'beq':  6,  'bne':  7,  'blt':  8,  'bgt':  9,  'ble': 10, 'bge': 11,
     'and': 12,  'or':  13,  'xor': 14,  'shl': 15,  'shr': 16,
     'call': 17, 'ret': 18,
+    'asr': 19,  'jmp': 20,
 }
 
 SIZES = {'.8': 0, '.16': 1, '.32': 2}
 
-REGS = {f'r{i}': i for i in range(7)}
+REGS = {f'r{i}': i for i in range(8)}
 REGS['sp'] = 7
 
 # Instructions that use the AGU for their operand
-AGU_OPS = {'ld', 'st', 'add', 'sub', 'and', 'or', 'xor', 'shl', 'shr'}
+AGU_OPS = {'ld', 'st', 'add', 'sub', 'and', 'or', 'xor', 'shl', 'shr', 'asr',
+           'call', 'jmp'}
 
 # Branch instructions
 BRANCH_OPS = {'beq', 'bne', 'blt', 'bgt', 'ble', 'bge'}
 
 # Pseudo-instructions. `push` is expanded by expand_pseudos() into a pair of
 # native instructions; the rest are handled inline in encode_instruction().
-PSEUDO_OPS = {'jmp', 'push', 'pop', 'clr', 'ldi'}
+PSEUDO_OPS = {'push', 'pop', 'clr', 'ldi'}
 
 # All known mnemonics (with possible size suffixes) and directives
 ALL_MNEMONICS = set(OPCODES.keys()) | PSEUDO_OPS
@@ -274,10 +276,13 @@ def encode_agu(operand_str, labels, scope=''):
     return 0, 0, payload
 
 
-def encode_branch(args, labels, scope=''):
+def encode_branch(args, labels, scope='', addr=0):
     """
     Parse branch arguments: rd, cmp_operand, target
     Returns (rd, payload_20).
+
+    The target is encoded as a PC-relative signed offset in bytes
+    (16 bits, range ±32 KB).
 
     Formats:
         bne r1, r2, .label
@@ -306,14 +311,15 @@ def encode_branch(args, labels, scope=''):
     else:
         raise ValueError(f"Invalid compare operand: {cmp_str}")
 
-    # Target
+    # Target — encode as signed offset from current PC
     target_str = target_str.strip()
     target = resolve_label_or_int(target_str, labels, scope)
+    offset = target - addr
 
-    if target < 0 or target > 0xFFFF:
-        raise ValueError(f"Branch target out of 16-bit range: {target:#x}")
+    if offset < -32768 or offset > 32767:
+        raise ValueError(f"Branch offset out of 16-bit signed range: {offset} (from {addr:#x} to {target:#x})")
 
-    payload = (reg_or_imm << 19) | (cmp_bits << 16) | (target & 0xFFFF)
+    payload = (reg_or_imm << 19) | (cmp_bits << 16) | (offset & 0xFFFF)
     return rd, payload
 
 
@@ -352,9 +358,11 @@ def format_listing(addr, word, source_line):
             fields += f' cmp=#{cmp} target={tgt:#06x}'
         else:
             fields += f' cmp=r{cmp} target={tgt:#06x}'
-    elif op_name in ('CALL',):
-        sx = payload if payload < 0x80000 else payload - 0x100000
-        fields += f' target={sx:#x}'
+    elif op_name == 'CALL':
+        tgt = payload & 0xFFFF
+        fields += f' target={tgt:#06x}'
+    elif op_name in ('JMPR', 'CALLR'):
+        fields += f' (PC = r{rd})'
     elif op_name in ('RET', 'NOP'):
         pass
     elif rv:
@@ -545,28 +553,28 @@ def expand_pseudos(source):
                 # would fit in a single ld, but at this stage we don't
                 # know addresses yet, so we conservatively reserve two
                 # instruction slots.
-                emit_pair = True
+                # Decide between one (`ld`) or two (`ld + ldh`) instructions.
+                # For numeric literals: pair if the value doesn't fit 20-bit signed.
+                # For labels (code addresses): always single instruction — code
+                # space is 16 bits and fits comfortably in the 20-bit immediate.
+                emit_pair = False
+                is_literal = False
                 try:
                     val = parse_int(val_str)
-                    if -0x80000 <= val <= 0x7FFFF:
-                        emit_pair = False
+                    is_literal = True
+                    if not (-0x80000 <= val <= 0x7FFFF):
+                        emit_pair = True
                 except (ValueError, KeyError):
                     pass
                 if label:
                     out.append(f'{label}:')
                 if emit_pair:
-                    try:
-                        val = parse_int(val_str)
-                        low = val & 0xFFFFF
-                        high = (val >> 12) & 0xFFFFF
-                        out.append(f'                ld.32   {reg}, #{low}')
-                        out.append(f'                ldh     {reg}, #{high}')
-                    except (ValueError, KeyError):
-                        # Label or expression: pass through to the encoder.
-                        out.append(f'                ld.32   {reg}, #{val_str}')
-                        out.append(f'                ldh     {reg}, #{val_str}')
+                    low = val & 0xFFFFF
+                    high = (val >> 12) & 0xFFFFF
+                    out.append(f'                ld.32   {reg}, #{low}')
+                    out.append(f'                ldh     {reg}, #{high}')
                 else:
-                    out.append(f'                ld.32   {reg}, #{val}')
+                    out.append(f'                ld.32   {reg}, #{val_str}')
                 continue
 
         out.append(raw)
@@ -645,7 +653,7 @@ def assemble(source, listing=False):
             continue
 
         try:
-            word = encode_instruction(line, labels, scope)
+            word = encode_instruction(line, labels, scope, addr)
         except Exception as e:
             print(f"Error on line {line_no}: {e}", file=sys.stderr)
             print(f"  {line}", file=sys.stderr)
@@ -661,7 +669,7 @@ def assemble(source, listing=False):
     return bytes(output)
 
 
-def encode_instruction(line, labels, scope=''):
+def encode_instruction(line, labels, scope='', addr=0):
     """Encode a single instruction line into a 32-bit word."""
     # Split mnemonic from arguments
     parts = line.split(None, 1)
@@ -677,17 +685,6 @@ def encode_instruction(line, labels, scope=''):
             break
     else:
         mnem = mnem_full
-
-    # ---- JMP pseudo-instruction: beq r0, #0, target ----
-    if mnem == 'jmp':
-        target_str = args.strip()
-        target = resolve_label_or_int(target_str, labels, scope)
-        if target < 0 or target > 0xFFFF:
-            raise ValueError(f"JMP target out of 16-bit range: {target:#x}")
-        opcode = OPCODES['beq']
-        # rd=r0, reg_or_imm=1, cmp=0, target
-        payload = (1 << 19) | (0 << 16) | (target & 0xFFFF)
-        return (opcode << 27) | (0 << 24) | (size << 22) | payload
 
     # ---- POP rN — single-instruction pseudo: ld.32 rN, [sp+=4] ----
     if mnem == 'pop':
@@ -715,13 +712,6 @@ def encode_instruction(line, labels, scope=''):
     if mnem == 'ret':
         return opcode << 27
 
-    # ---- CALL ----
-    if mnem == 'call':
-        target_str = args.strip()
-        target = resolve_label_or_int(target_str, labels, scope)
-        payload = mask(target, 20)
-        return (opcode << 27) | payload
-
     # ---- LDH ----
     if mnem == 'ldh':
         arg_parts = [a.strip() for a in args.split(',')]
@@ -739,14 +729,27 @@ def encode_instruction(line, labels, scope=''):
 
     # ---- Branches ----
     if mnem in BRANCH_OPS:
-        rd, payload = encode_branch(args, labels, scope)
+        rd, payload = encode_branch(args, labels, scope, addr)
         return (opcode << 27) | (rd << 24) | (size << 22) | payload
 
-    # ---- AGU instructions (LD, ST, ADD, SUB, AND, OR, XOR, SHL, SHR) ----
+    # ---- AGU instructions ----
     if mnem in AGU_OPS:
         arg_parts = split_args(args)
 
-        if mnem == 'st':
+        if mnem in ('call', 'jmp'):
+            # Single operand — the target. rd is unused (encoded as 0).
+            # Bare labels/numbers are the target itself, not a memory address
+            # to read from. Force immediate encoding unless it's a register
+            # or memory operand.
+            operand_str = args.strip()
+            if (not operand_str.startswith('#') and
+                not operand_str.startswith('[') and
+                operand_str.lower() not in REGS):
+                operand_str = '#' + operand_str
+            reg_value, addr_imm, payload = encode_agu(operand_str, labels, scope)
+            return (opcode << 27) | (0 << 24) | (size << 22) | (reg_value << 21) | (addr_imm << 20) | payload
+
+        elif mnem == 'st':
             # st operand, rd  OR  st [addr], rd
             if len(arg_parts) != 2:
                 raise ValueError("ST needs 2 arguments")

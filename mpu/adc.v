@@ -46,7 +46,7 @@ module sigma_delta_adc (
             acc <= 13'd0;
             result <= 12'd0;
         end else if (cnt == 12'hFFF) begin
-            result <= acc[11:0];
+            result <= acc[12] ? 12'hFFF : acc[11:0];
             acc <= {12'd0, adc_in_rr};
             cnt <= 12'd0;
         end else begin

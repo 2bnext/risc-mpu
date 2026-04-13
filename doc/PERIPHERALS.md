@@ -8,8 +8,8 @@ The authoritative source of pin assignments is [`mpu/mpu.pcf`](../mpu/mpu.pcf). 
 
 | MMIO       | Peripheral                                       |
 |------------|--------------------------------------------------|
-| `0xFFFF0000` | UART TX data (write a byte to send)            |
-| `0xFFFF0004` | UART TX status (bit 0 = busy)                  |
+| `0xFFFF0000` | UART TX data (write a byte — pushes into the 16-byte FIFO) |
+| `0xFFFF0004` | UART TX status (bit 0 = FIFO full)             |
 | `0xFFFF0008` | LED register (bit 0 = G, 1 = R, 2 = B)         |
 | `0xFFFF0010` | GPIO data (read = live pin state, write = drives outputs) |
 | `0xFFFF0014` | GPIO direction (1 = output, 0 = input)         |
@@ -43,6 +43,8 @@ The S2 button drops the CPU back into the bootloader so a new `.mpu` can be uplo
 
 **Software:** the bootloader and `flash.py` use UART RX; `printf`, `puts`, `putchar`, and the `__putc` low-level helper all use UART TX. See [stdlib.md](toolchain/stdlib.md).
 
+**Ring buffer:** `uart_tx.v` has a 16-byte FIFO between the CPU and the shift register. The `busy` bit at `0xFFFF0004` now means "FIFO is full" rather than "currently shifting" — the CPU can burst up to 16 bytes at full clock speed without stalling, and only spins when the FIFO actually fills up. At 115200 baud that's ~1.4 ms of buffering. The existing `__putc` busy-wait loop (`ld.8 r4, 0xFFFF0004; bne.8 r4, #0, .wait`) needs no changes — it just almost never trips now.
+
 ---
 
 ## RGB LED
@@ -73,14 +75,14 @@ Eight bidirectional pins, individually configurable as input or output via the d
 
 | Signal     | iCE40 ball | Notes                                          |
 |------------|------------|------------------------------------------------|
-| `gpio[0]`  | **9**      | Placeholder — re-pin to whatever PMOD/header you want to use |
-| `gpio[1]`  | **10**     |                                                |
-| `gpio[2]`  | **11**     |                                                |
-| `gpio[3]`  | **12**     |                                                |
-| `gpio[4]`  | **19**     |                                                |
-| `gpio[5]`  | **20**     |                                                |
-| `gpio[6]`  | **21**     |                                                |
-| `gpio[7]`  | **23**     |                                                |
+| `gpio[0]`  | **36**     | Directly accessible iCESugar 1.5 header pins   |
+| `gpio[1]`  | **37**     |                                                |
+| `gpio[2]`  | **38**     |                                                |
+| `gpio[3]`  | **42**     |                                                |
+| `gpio[4]`  | **43**     |                                                |
+| `gpio[5]`  | **44**     |                                                |
+| `gpio[6]`  | **45**     |                                                |
+| `gpio[7]`  | **46**     |                                                |
 
 **External hardware:** none required by the MPU itself. Add series resistors, pull-ups, or level-shifting only if your specific application needs them. The iCE40 pads are 3.3 V CMOS — do not feed in voltages above Vcc + 0.3 V.
 
@@ -207,22 +209,22 @@ The full pin list lives in [`mpu/mpu.pcf`](../mpu/mpu.pcf). Here it is in one pl
 |------------|-------------|-----------|-------|
 | 4          | `uart_tx`   | out       | UART  |
 | 6          | `uart_rx`   | in        | UART  |
-| 9          | `gpio[0]`   | bidir     | GPIO  |
-| 10         | `gpio[1]`   | bidir     | GPIO  |
-| 11         | `gpio[2]`   | bidir     | GPIO  |
-| 12         | `gpio[3]`   | bidir     | GPIO  |
 | 18         | `btn_s2`    | in        | Reset |
-| 19         | `gpio[4]`   | bidir     | GPIO  |
-| 20         | `gpio[5]`   | bidir     | GPIO  |
-| 21         | `gpio[6]`   | bidir     | GPIO  |
-| 23         | `gpio[7]`   | bidir     | GPIO  |
 | 25         | `i2c_scl`   | bidir     | I²C   |
 | 26         | `i2c_sda`   | bidir     | I²C   |
 | 27         | `adc_in`    | in        | ADC   |
 | 28         | `adc_out`   | out       | ADC   |
 | 35         | `clk`       | in        | Clock |
+| 36         | `gpio[0]`   | bidir     | GPIO  |
+| 37         | `gpio[1]`   | bidir     | GPIO  |
+| 38         | `gpio[2]`   | bidir     | GPIO  |
 | 39         | `led_b`     | out       | LED   |
 | 40         | `led_r`     | out       | LED   |
 | 41         | `led_g`     | out       | LED   |
+| 42         | `gpio[3]`   | bidir     | GPIO  |
+| 43         | `gpio[4]`   | bidir     | GPIO  |
+| 44         | `gpio[5]`   | bidir     | GPIO  |
+| 45         | `gpio[6]`   | bidir     | GPIO  |
+| 46         | `gpio[7]`   | bidir     | GPIO  |
 
 All MPU peripherals are 3.3 V CMOS. Nothing is 5 V tolerant.

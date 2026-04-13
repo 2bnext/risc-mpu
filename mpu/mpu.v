@@ -22,8 +22,10 @@ module mpu (
     localparam S_EXECUTE = 3'd2;
     localparam S_MEM     = 3'd3;
     localparam S_WB      = 3'd4;
+    localparam S_CALL_WR = 3'd5;  // memory-indirect call: write return addr
 
     reg [2:0] state;
+    reg       call_mem_indirect;   // set when call takes the memory-read path
 
     // ---- Program counter ----
     reg [31:0] pc;
@@ -71,6 +73,10 @@ module mpu (
     // Subroutine (sp = r7 = stack pointer)
     localparam OP_CALL  = 5'b10001;  // 17
     localparam OP_RET   = 5'b10010;  // 18
+
+    // Extended
+    localparam OP_ASR   = 5'b10011;  // 19  arithmetic shift right (signed)
+    localparam OP_JMP   = 5'b10100;  // 20  jump via AGU (PC = operand)
 
     // ---- Register file (r0 is hardwired to 0) ----
     reg [31:0] regs [0:7];
@@ -124,10 +130,10 @@ module mpu (
     // ---- Branch decode ----
     // payload[19]    = reg_or_imm: 0=register, 1=3-bit immediate
     // payload[18:16] = compare register select OR 3-bit immediate
-    // payload[15:0]  = branch target address
+    // payload[15:0]  = PC-relative signed offset (bytes)
     wire        br_is_imm  = payload[19];
     wire [2:0]  br_cmp_sel = payload[18:16];
-    wire [15:0] br_target  = payload[15:0];
+    wire [31:0] br_target  = pc + {{16{payload[15]}}, payload[15:0]};
 
     wire [31:0] rd_val_raw  = (rd == 0) ? 32'd0 : regs[rd];
     wire [31:0] cmp_val_raw = br_is_imm ? {29'd0, br_cmp_sel} : ((br_cmp_sel == 0) ? 32'd0 : regs[br_cmp_sel]);
@@ -188,7 +194,8 @@ module mpu (
             agu_wb_en_r   <= 1'b0;
             agu_wb_reg_r  <= 3'd0;
             agu_wb_val_r  <= 32'd0;
-            call_target   <= 32'd0;
+            call_target        <= 32'd0;
+            call_mem_indirect  <= 1'b0;
             for (i = 0; i < 8; i = i + 1)
                 regs[i] <= 32'd0;
             regs[7] <= 32'h00010000;  // sp (r7) = SP, top of 64KB RAM
@@ -236,7 +243,7 @@ module mpu (
                         end
 
                         OP_BEQ, OP_BNE, OP_BLT, OP_BGT, OP_BLE, OP_BGE: begin
-                            pc    <= branch_taken ? {16'd0, br_target} : pc + 32'd4;
+                            pc    <= branch_taken ? br_target : pc + 32'd4;
                             state <= S_FETCH;
                         end
 
@@ -253,7 +260,7 @@ module mpu (
                             state    <= S_MEM;
                         end
 
-                        OP_LD, OP_ADD, OP_SUB, OP_AND, OP_OR, OP_XOR, OP_SHL, OP_SHR: begin
+                        OP_LD, OP_ADD, OP_SUB, OP_AND, OP_OR, OP_XOR, OP_SHL, OP_SHR, OP_ASR: begin
                             if (agu_is_imm) begin
                                 if (rd != 0) begin
                                     case (opcode)
@@ -265,6 +272,7 @@ module mpu (
                                         OP_XOR: alu_raw = regs[rd] ^ agu_imm_value;
                                         OP_SHL: alu_raw = regs[rd] << agu_imm_value[4:0];
                                         OP_SHR: alu_raw = regs[rd] >> agu_imm_value[4:0];
+                                        OP_ASR: alu_raw = $signed(regs[rd]) >>> agu_imm_value[4:0];
                                         default: alu_raw = 32'd0;
                                     endcase
                                     regs[rd] <= size_merge(regs[rd], alu_raw, size);
@@ -281,14 +289,39 @@ module mpu (
                         end
 
                         OP_CALL: begin
-                            // sp -= 4, [sp] = PC+4, jump to target
-                            regs[7]     <= regs[7] - 32'd4;
-                            mem_addr    <= regs[7] - 32'd4;
-                            mem_wdata   <= pc + 32'd4;
-                            mem_size    <= 2'b10;
-                            mem_wr      <= 1'b1;
-                            call_target <= {{12{payload[19]}}, payload};
-                            state       <= S_MEM;
+                            // CALL via AGU. Target from immediate/register
+                            // (agu_is_imm) or from memory (read first).
+                            if (agu_is_imm) begin
+                                // Target available now — push return addr.
+                                call_mem_indirect <= 1'b0;
+                                regs[7]     <= regs[7] - 32'd4;
+                                mem_addr    <= regs[7] - 32'd4;
+                                mem_wdata   <= pc + 32'd4;
+                                mem_size    <= 2'b10;
+                                mem_wr      <= 1'b1;
+                                call_target <= agu_imm_value;
+                                state       <= S_MEM;
+                            end else begin
+                                // Memory-indirect: read target first.
+                                call_mem_indirect <= 1'b1;
+                                mem_addr <= agu_eff_addr;
+                                mem_size <= 2'b10;
+                                mem_rd   <= 1'b1;
+                                state    <= S_MEM;
+                            end
+                        end
+
+                        OP_JMP: begin
+                            // JMP via AGU. Same as "ld pc, <agu>".
+                            if (agu_is_imm) begin
+                                pc    <= agu_imm_value;
+                                state <= S_FETCH;
+                            end else begin
+                                mem_addr <= agu_eff_addr;
+                                mem_size <= 2'b10;
+                                mem_rd   <= 1'b1;
+                                state    <= S_MEM;
+                            end
                         end
 
                         OP_RET: begin
@@ -316,7 +349,26 @@ module mpu (
                 S_WB: begin
                     case (opcode)
                         OP_CALL: begin
-                            pc    <= call_target;
+                            if (!call_mem_indirect) begin
+                                // Immediate/register-direct: stack write done, jump.
+                                pc    <= call_target;
+                                state <= S_FETCH;
+                            end else begin
+                                // Memory-indirect: mem_rdata has the target.
+                                // Now push the return address to the stack.
+                                call_target <= mem_rdata;
+                                regs[7]     <= regs[7] - 32'd4;
+                                mem_addr    <= regs[7] - 32'd4;
+                                mem_wdata   <= pc + 32'd4;
+                                mem_size    <= 2'b10;
+                                mem_wr      <= 1'b1;
+                                state       <= S_CALL_WR;
+                            end
+                        end
+
+                        OP_JMP: begin
+                            // Memory-indirect jmp: target arrived in mem_rdata.
+                            pc    <= mem_rdata;
                             state <= S_FETCH;
                         end
 
@@ -343,6 +395,7 @@ module mpu (
                                     OP_XOR: alu_raw = regs[rd] ^ mem_rdata;
                                     OP_SHL: alu_raw = regs[rd] << mem_rdata[4:0];
                                     OP_SHR: alu_raw = regs[rd] >> mem_rdata[4:0];
+                                    OP_ASR: alu_raw = $signed(regs[rd]) >>> mem_rdata[4:0];
                                     default: alu_raw = 32'd0;
                                 endcase
                                 regs[rd] <= size_merge(regs[rd], alu_raw, size);
@@ -354,6 +407,17 @@ module mpu (
                     // AGU writeback (post-increment)
                     if (agu_wb_en_r && agu_wb_reg_r != 0)
                         regs[agu_wb_reg_r] <= agu_wb_val_r;
+                end
+
+                // ---- CALL_WR: memory-indirect call, stack write phase ----
+                S_CALL_WR: begin
+                    if (mem_ready) begin
+                        pc    <= call_target;
+                        state <= S_FETCH;
+                        // AGU writeback for post-increment on the target operand
+                        if (agu_wb_en_r && agu_wb_reg_r != 0)
+                            regs[agu_wb_reg_r] <= agu_wb_val_r;
+                    end
                 end
             endcase
         end

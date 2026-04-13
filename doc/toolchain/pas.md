@@ -181,7 +181,7 @@ writeln('chip id = ', id);
 
 `gpio_read` is a function and must be called with empty parentheses (`gpio_read()`) when used in an expression.
 
-`sar` exists because the MPU's hardware `shr` is logical — for the BME280 reference compensation math (and anything else that uses `>>` on a signed value), you have to fold the high bits in by hand. The compiler emits an inline helper called `__sar` that does this once, and `sar(x, n)` calls it.
+`sar` exists because the MPU's hardware `shr` is logical — for the BME280 reference compensation math (and anything else that uses `>>` on a signed value), you need sign-extending right shift instead. Since v0.2 the ISA has a native `asr` opcode, so `sar(x, n)` now calls a thin wrapper (`__sar`) that just forwards to one `asr.32` instruction — it used to be a software loop.
 
 ## What is missing
 

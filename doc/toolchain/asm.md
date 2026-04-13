@@ -90,12 +90,13 @@ The complete instruction list — the assembler accepts both real opcodes and a 
 | `xor`        | real   | Bitwise XOR                                               |
 | `shl`        | real   | Logical shift left                                        |
 | `shr`        | real   | Logical shift right                                       |
-| `beq` / `bne` / `blt` / `bgt` / `ble` / `bge` | real | Conditional branches (compare `rd` against reg or `#imm`) |
-| `call`       | real   | Push return address, jump                                 |
+| `asr`        | real   | Arithmetic shift right (sign-fill)                        |
+| `beq` / `bne` / `blt` / `bgt` / `ble` / `bge` | real | Conditional branches (compare `rd` against reg or `#imm`, PC-relative target) |
+| `call`       | real   | Push return address, jump via AGU (`call label`, `call r2`, `call [r2+4]`) |
 | `ret`        | real   | Pop return address, jump to it                            |
+| `jmp`        | real   | Unconditional jump via AGU (`jmp label`, `jmp r2`, `jmp [r2+4]`) |
 | `clr rD`     | pseudo | Clear `rD` to zero. Expands to `ld.<sz> rD, r0`. Size suffix is honoured (`.8`/`.16` clear only the low byte/halfword and preserve the upper bits — same size-merge behaviour as `ld`). |
 | `ldi rD, #imm` | pseudo | Load any 32-bit constant into `rD`. Expands to a single `ld.32` if the value fits in the 20-bit signed immediate, otherwise an `ld.32` + `ldh` pair. |
-| `jmp target` | pseudo | Unconditional branch. Expands to `beq.32 r0, #0, target`. |
 | `push rN`    | pseudo | Two instructions: `sub.32 sp, #4` then `st.32 [sp], rN`. A label on a `push` line points at the first expanded instruction. |
 | `pop rN`     | pseudo | One instruction: `ld.32 rN, [sp+=4]`.                     |
 
