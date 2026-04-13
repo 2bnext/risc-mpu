@@ -197,7 +197,7 @@ RISC-V (2010) continued the tradition as an open standard, designed from scratch
 
 ### Where the MPU Fits
 
-The MPU is a RISC design, but it pushes the simplicity further than most. Only 19 instructions. Only 8 registers. Fixed 32-bit instruction width. One addressing mode system (the AGU) shared across all instructions that need an operand. No flags register, no interrupts, no virtual memory, no caches. Just the bare essence of what a CPU needs to be useful.
+The MPU is a RISC design, but it pushes the simplicity further than most. Only 21 instructions. Only 8 registers. Fixed 32-bit instruction width. One addressing mode system (the AGU) shared across all instructions that need an operand. No flags register, no interrupts, no virtual memory, no caches. Just the bare essence of what a CPU needs to be useful.
 
 And yet it runs C. It has a printf. It fits on a $30 FPGA board. The entire processor, memory system, UART, and bootloader are about 500 lines of Verilog. You can read every line, understand every signal, and trace an instruction from fetch to writeback.
 
@@ -213,7 +213,7 @@ Here's what defines it:
 
 - **32-bit architecture**: addresses, registers, and instructions are all 32 bits.
 - **8 registers**: r0 through sp. r0 is always zero. sp is the stack pointer.
-- **19 instructions**: NOP, LD, LDH, ST, ADD, SUB, six branches, AND, OR, XOR, SHL, SHR, CALL, RET.
+- **21 instructions**: NOP, LD, LDH, ST, ADD, SUB, six branches, AND, OR, XOR, SHL, SHR, ASR, CALL, RET, JMP.
 - **Unified instruction format**: every instruction is 32 bits with the same field layout.
 - **Address Generation Unit (AGU)**: one flexible system handles all operand addressing for nine different instructions.
 - **Memory-mapped I/O**: the UART and LEDs appear as memory addresses. No special I/O instructions needed.
@@ -972,3 +972,6 @@ If you want to go further:
 - Write your own programs. Start with blinking the LED. Move to string processing. Try implementing a simple game.
 - Modify the hardware. Add a new instruction. Add a timer. Add a second UART.
 
+---
+
+*Winald de Vries / 2B Next BV, the Netherlands*

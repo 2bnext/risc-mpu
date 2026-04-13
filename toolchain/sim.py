@@ -30,8 +30,7 @@ OP_SHR  = 16
 OP_CALL = 17
 OP_RET  = 18
 OP_ASR  = 19
-OP_JMPR = 20
-OP_CALLR = 21
+OP_JMP  = 20
 
 OP_NAMES = {
     0: 'NOP', 1: 'LD', 2: 'LDH', 3: 'ST',
@@ -39,7 +38,7 @@ OP_NAMES = {
     6: 'BEQ', 7: 'BNE', 8: 'BLT', 9: 'BGT', 10: 'BLE', 11: 'BGE',
     12: 'AND', 13: 'OR', 14: 'XOR', 15: 'SHL', 16: 'SHR',
     17: 'CALL', 18: 'RET',
-    19: 'ASR', 20: 'JMPR', 21: 'CALLR',
+    19: 'ASR', 20: 'JMP',
 }
 
 SIZE_NAMES = {0: '.8', 1: '.16', 2: '.32'}
@@ -414,7 +413,8 @@ class MPU:
         elif opcode in (OP_BEQ, OP_BNE, OP_BLT, OP_BGT, OP_BLE, OP_BGE):
             br_is_imm = (payload >> 19) & 1
             br_cmp_sel = (payload >> 16) & 7
-            br_target = payload & 0xFFFF
+            br_offset = sign_extend(payload & 0xFFFF, 16)
+            br_target = (self.pc + br_offset) & MASK32
 
             rd_val = self.reg_read(rd)
             if br_is_imm:
@@ -456,12 +456,17 @@ class MPU:
                 self.pc += 4
 
         elif opcode == OP_CALL:
-            # 16-bit absolute target (matches branch encoding).
-            target = payload & 0xFFFF
+            # Target via AGU: immediate/register-direct or memory-indirect.
+            if is_imm:
+                target = imm_value
+            else:
+                target = self.mem_read(eff_addr, 2)
             sp = self.reg_read(7)
             sp = (sp - 4) & MASK32
             self.mem_write(sp, 2, (self.pc + 4) & MASK32)
             self.regs[7] = sp
+            if wb_en:
+                self.reg_write(wb_reg, wb_val)
             if self.trace:
                 print(f"  call: target={target:#x} ret={self.pc+4:#x} sp={sp:#x}")
             self.pc = target
@@ -474,21 +479,16 @@ class MPU:
                 print(f"  ret: addr={ret_addr:#x} sp={self.regs[7]:#x}")
             self.pc = ret_addr
 
-        elif opcode == OP_JMPR:
-            # PC = rD
-            self.pc = self.reg_read(rd)
+        elif opcode == OP_JMP:
+            # PC = AGU result (immediate, register, or memory-indirect).
+            if is_imm:
+                target = imm_value
+            else:
+                target = self.mem_read(eff_addr, 2)
+            if wb_en:
+                self.reg_write(wb_reg, wb_val)
             if self.trace:
-                print(f"  jmpr: r{rd} = {self.pc:#x}")
-
-        elif opcode == OP_CALLR:
-            # sp -= 4, [sp] = PC+4, PC = rD
-            target = self.reg_read(rd)
-            sp = self.reg_read(7)
-            sp = (sp - 4) & MASK32
-            self.mem_write(sp, 2, (self.pc + 4) & MASK32)
-            self.regs[7] = sp
-            if self.trace:
-                print(f"  callr: r{rd}={target:#x} ret={self.pc+4:#x}")
+                print(f"  jmp: target={target:#x}")
             self.pc = target
 
         else:

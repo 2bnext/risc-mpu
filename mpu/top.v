@@ -190,7 +190,7 @@ module top (
     reg  [7:0] uart_din;
 
     always @(posedge clk) begin
-        uart_wr  <= mem_wr & is_uart & (mem_addr[3:0] == 4'h0);
+        uart_wr  <= mem_wr & is_uart & (mem_addr[7:0] == 8'h00);
         uart_din <= mem_wdata[7:0];
     end
 
@@ -244,7 +244,7 @@ module top (
     // ---- LED register (0xFFFF0008) ----
     reg [2:0] led_reg = 3'b000;
     reg mpu_rst_n_d;
-    wire led_wr = mem_wr & is_uart & (mem_addr[3:0] == 4'h8);
+    wire led_wr = mem_wr & is_uart & (mem_addr[7:0] == 8'h08);
     always @(posedge clk) begin
         mpu_rst_n_d <= mpu_rst_n;
         if (!mpu_rst_n)

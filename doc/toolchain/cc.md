@@ -15,7 +15,41 @@ In the `testing/` directory, the Makefile chains everything:
 make program.mpu      # program.c -> program.s -> program.mpu
 ```
 
-The standard library (`toolchain/stdlib.asm`) is automatically appended to the generated assembly, so all stdlib functions (`printf`, `puts`, `setleds`, …) are available without an `#include`.
+The standard library (`toolchain/stdlib.asm`) is automatically appended to the generated assembly, so all stdlib functions (`printf`, `puts`, `setleds`, …) are available without an `#include`. A reference header `testing/stdlib.h` lists all available functions.
+
+## Preprocessor
+
+A minimal preprocessor runs before parsing. It handles:
+
+**`#include "file"`** — textual inclusion, relative to the including file's directory. Duplicate and circular includes are silently skipped (each file is included at most once).
+
+**`#define NAME value`** — simple text substitution (word-boundary aware, no function-style macros). `#define NAME` with no value defines the name as empty (for use with `#ifdef`).
+
+**`#undef NAME`** — removes a definition.
+
+**`#ifdef NAME` / `#ifndef NAME` / `#else` / `#endif`** — conditional compilation. Nesting is supported.
+
+Unrecognised `#` directives are silently ignored.
+
+```c
+#include "ssd1306.h"
+#include "bme280.h"
+
+#define LED_PIN    0b1000_0000
+#define UPDATE_MS  5_000_000
+
+#ifndef SSD1306_H
+#define SSD1306_H
+// ... header contents ...
+#endif
+```
+
+## Number literals
+
+In addition to decimal and hex (`0xFF`), the compiler supports:
+
+- **Binary literals**: `0b1010`, `0b1111_0000`
+- **Digit separators**: underscores in any numeric constant are ignored, for readability: `1_000_000`, `0xFF_FF`, `0b0000_0001`, `3.141_592`
 
 ## Types
 
@@ -86,7 +120,7 @@ There is **no** `double`, `enum`, or `typedef` support, and no proper `void (*)(
 
 ## Function pointers
 
-The MPU's `callr` instruction makes function pointers cheap. The C compiler doesn't support the `void (*fp)()` declaration syntax, but you can store function addresses in `int` variables and call through them — the compiler emits `callr` automatically when the call target is a variable rather than a function name.
+The MPU's AGU-based `call` instruction makes function pointers cheap — `call r2` is a register-indirect call in one instruction. The C compiler doesn't support the `void (*fp)()` declaration syntax, but you can store function addresses in `int` variables and call through them — the compiler emits `call rN` automatically when the call target is a variable rather than a function name.
 
 ```c
 int square(int x) { return x * x; }
@@ -95,7 +129,7 @@ int cube(int x)   { return x * x * x; }
 void main() {
     int fp;
     fp = &square;          // store function address
-    int a = fp(5);         // indirect call → uses callr
+    int a = fp(5);         // indirect call → uses call rN
     fp = &cube;
     int b = fp(3);
 
@@ -107,7 +141,7 @@ void main() {
 }
 ```
 
-`&funcname` evaluates to the 16-bit code address of the function. The compiler tracks all function names and emits a `call` for direct calls (target known at compile time) or a `callr` for indirect calls (target loaded from a variable). The runtime cost is one extra `ld.32` to load the pointer into a register before the indirect call.
+`&funcname` evaluates to the code address of the function. The compiler tracks all function names and emits a `call label` for direct calls (target known at compile time) or a `call rN` for indirect calls (target loaded from a variable). Both use the same `call` opcode — the AGU handles the addressing mode. The runtime cost is one extra `ld.32` to load the pointer into a register before the indirect call.
 
 Caveats:
 - No type checking on function pointers — the variable type is just `int`.
@@ -317,7 +351,7 @@ A complete I²C example lives at [`testing/bme280demo.c`](../../testing/bme280de
 - `double` (only single-precision `float`)
 - `enum`, `typedef`
 - Proper function-pointer *type syntax* (`void (*fp)(int)`) — function pointers themselves work, stored as `int`; see **Function pointers** above
-- The preprocessor (`#include`, `#define`, `#ifdef`, …) — there is no preprocessor at all
+- Function-style macros (`#define MAX(a,b)`) — only simple value substitution
 - `switch` / `case`
 - `do { } while ()`
 - `goto`

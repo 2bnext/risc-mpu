@@ -41,9 +41,10 @@ TOKEN_SPEC = [
     ('COMMENT_BLOCK', r'/\*[\s\S]*?\*/'),
     ('STRING',   r'"([^"\\]|\\.)*"'),
     ('CHAR_LIT', r"'([^'\\]|\\.)'"),
-    ('HEX',      r'0[xX][0-9a-fA-F]+'),
-    ('FLOAT_LIT', r'[0-9]+\.[0-9]*(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+'),
-    ('NUMBER',   r'[0-9]+'),
+    ('HEX',      r'0[xX][0-9a-fA-F_]+'),
+    ('BIN',      r'0[bB][01_]+'),
+    ('FLOAT_LIT', r'[0-9][0-9_]*\.[0-9_]*(?:[eE][+-]?[0-9_]+)?|[0-9][0-9_]*[eE][+-]?[0-9_]+'),
+    ('NUMBER',   r'[0-9][0-9_]*'),
     ('IDENT',    r'[a-zA-Z_][a-zA-Z0-9_]*'),
     ('LSHIFT',   r'<<'),
     ('RSHIFT',   r'>>'),
@@ -287,7 +288,9 @@ class Parser:
     def parse(self):
         decls = []
         while self.peek().kind != 'EOF':
-            decls.append(self.parse_top_level())
+            d = self.parse_top_level()
+            if d is not None:
+                decls.append(d)
         return Program(decls)
 
     def parse_type(self):
@@ -401,6 +404,10 @@ class Parser:
             while self.match('COMMA'):
                 params.append(self.parse_param())
         self.expect('RPAREN')
+        # Forward declaration (prototype): just a semicolon, no body.
+        if self.peek().kind == 'SEMI':
+            self.advance()
+            return None
         body = self.parse_block()
         return FuncDecl(ret_type, name, params, body)
 
@@ -678,13 +685,16 @@ class Parser:
         pk = self.peek()
         if pk.kind == 'NUMBER':
             self.advance()
-            return NumLit(int(pk.value))
+            return NumLit(int(pk.value.replace('_', '')))
         if pk.kind == 'HEX':
             self.advance()
-            return NumLit(int(pk.value, 16))
+            return NumLit(int(pk.value.replace('_', ''), 16))
+        if pk.kind == 'BIN':
+            self.advance()
+            return NumLit(int(pk.value.replace('_', ''), 2))
         if pk.kind == 'FLOAT_LIT':
             self.advance()
-            return FloatLit(float(pk.value))
+            return FloatLit(float(pk.value.replace('_', '')))
         if pk.kind == 'CHAR_LIT':
             self.advance()
             ch = pk.value[1:-1]  # strip quotes
@@ -724,7 +734,7 @@ class Parser:
 # ---------------------------------------------------------------------------
 
 # Standard library functions — don't generate code for these, they're in stdlib.asm
-STDLIB_FUNCS = {'putchar', 'puts', 'sleep', 'setleds', 'printf',
+STDLIB_FUNCS = {'putchar', 'puts', 'sleep', 'setleds', 'printf', 'sprintf',
                 'gpio_set_dir', 'gpio_write', 'gpio_read',
                 'i2c_start', 'i2c_stop', 'i2c_write', 'i2c_read',
                 'adc_read',
@@ -1613,18 +1623,22 @@ class CodeGen:
                 self.emit(f'                add.32  sp, #4')
                 self.stack_depth -= 1
             else:
-                # Load the element
+                # Load the element. For sub-word loads, mask after instead
+                # of clearing before — the dest register is also the AGU
+                # base, so a pre-clear would clobber the base address.
                 sz = self.size_suffix(elem_type) if elem_type else '.8'
-                if sz != '.32':
-                    self.emit(f'                clr     r{dest}')
                 self.push(other)
                 self.emit(f'                ld{sz}   r{dest}, [r{dest}][r{other}]')
                 self.emit(f'                add.32  sp, #4')
                 self.stack_depth -= 1
+                if sz == '.8':
+                    self.emit(f'                and.32  r{dest}, #0xFF')
+                elif sz == '.16':
+                    self.emit(f'                and.32  r{dest}, #0xFFFF')
 
         elif isinstance(node, FuncCall):
             # Function-pointer call: if the name is a known variable (not a
-            # function), load it as a target address and use `callr`.
+            # function), load it as a target address and use `call rN`.
             is_indirect = (node.name not in self.functions and
                            (node.name in self.locals or node.name in self.globals))
             # Push arguments right-to-left
@@ -1641,7 +1655,7 @@ class CodeGen:
                 else:
                     _, label, _ = self.globals[node.name]
                     self.emit(f'                ld.32   r2, {label}')
-                self.emit(f'                callr   r2')
+                self.emit(f'                call    r2')
             else:
                 self.emit(f'                call    {node.name}')
             # Clean up args
@@ -1653,6 +1667,106 @@ class CodeGen:
             if dest != 1:
                 self.push(1)
                 self.pop(dest)
+
+
+def preprocess(source, base_dir, _included=None, _defines=None):
+    """Minimal C preprocessor.
+
+    Supports:
+      #include "file"           — textual inclusion (circular/duplicate guarded)
+      #define NAME value        — simple text substitution (no function macros)
+      #define NAME              — define as empty (for #ifdef)
+      #undef NAME
+      #ifdef NAME / #ifndef NAME / #else / #endif — conditional compilation
+    """
+    if _included is None:
+        _included = set()
+    if _defines is None:
+        _defines = {}
+    lines = source.split('\n')
+    out = []
+    # Conditional compilation stack: each entry is True if we're emitting
+    cond_stack = [True]
+
+    for line in lines:
+        stripped = line.strip()
+        active = all(cond_stack)
+
+        # ---- Conditional directives (always processed, even when skipping) ----
+        if stripped.startswith('#ifdef '):
+            name = stripped[len('#ifdef '):].strip()
+            cond_stack.append(active and name in _defines)
+            continue
+        if stripped.startswith('#ifndef '):
+            name = stripped[len('#ifndef '):].strip()
+            cond_stack.append(active and name not in _defines)
+            continue
+        if stripped == '#else':
+            if len(cond_stack) < 2:
+                print("error: #else without #ifdef/#ifndef", file=sys.stderr)
+                sys.exit(1)
+            parent_active = all(cond_stack[:-1])
+            cond_stack[-1] = parent_active and not cond_stack[-1]
+            continue
+        if stripped == '#endif':
+            if len(cond_stack) < 2:
+                print("error: #endif without #ifdef/#ifndef", file=sys.stderr)
+                sys.exit(1)
+            cond_stack.pop()
+            continue
+
+        if not active:
+            continue
+
+        # ---- #include ----
+        if stripped.startswith('#include'):
+            rest = stripped[len('#include'):].strip()
+            if rest.startswith('"') and rest.endswith('"'):
+                fname = rest[1:-1]
+                fpath = os.path.join(base_dir, fname)
+                if fpath in _included:
+                    continue
+                _included.add(fpath)
+                try:
+                    with open(fpath) as f:
+                        inc_source = f.read()
+                except FileNotFoundError:
+                    print(f"error: #include file not found: {fname}", file=sys.stderr)
+                    sys.exit(1)
+                inc_dir = os.path.dirname(os.path.abspath(fpath))
+                out.append(preprocess(inc_source, inc_dir, _included, _defines))
+            continue
+
+        # ---- #define ----
+        if stripped.startswith('#define '):
+            rest = stripped[len('#define '):].strip()
+            parts = rest.split(None, 1)
+            name = parts[0]
+            value = parts[1] if len(parts) > 1 else ''
+            _defines[name] = value
+            continue
+
+        # ---- #undef ----
+        if stripped.startswith('#undef '):
+            name = stripped[len('#undef '):].strip()
+            _defines.pop(name, None)
+            continue
+
+        # ---- Other # directives: skip silently ----
+        if stripped.startswith('#'):
+            continue
+
+        # ---- Apply text substitutions ----
+        if _defines:
+            for name, value in _defines.items():
+                if name in line:
+                    # Word-boundary replacement to avoid partial matches
+                    import re
+                    line = re.sub(r'\b' + re.escape(name) + r'\b', value, line)
+
+        out.append(line)
+
+    return '\n'.join(out)
 
 
 def main():
@@ -1676,16 +1790,25 @@ def main():
         print(f"error: input file not found: {input_file}", file=sys.stderr)
         sys.exit(1)
 
+    source = preprocess(source, os.path.dirname(os.path.abspath(input_file)))
+
     # Find stdlib.asm next to this script
     stdlib_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'stdlib.asm')
     if not os.path.exists(stdlib_path):
         stdlib_path = None
 
-    tokens = tokenize(source)
-    parser = Parser(tokens)
-    ast = parser.parse()
-    codegen = CodeGen(stdlib_path=stdlib_path)
-    asm = codegen.generate(ast)
+    try:
+        tokens = tokenize(source)
+        parser = Parser(tokens)
+        ast = parser.parse()
+        codegen = CodeGen(stdlib_path=stdlib_path)
+        asm = codegen.generate(ast)
+    except SyntaxError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import asm as _asm

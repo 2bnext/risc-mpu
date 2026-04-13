@@ -48,6 +48,22 @@ Formatted output to UART. Supports the following format specifiers:
 printf("val=%d hex=%x\n", 42, 42);  // prints "val=42 hex=2a\n"
 ```
 
+### sprintf
+
+```c
+void sprintf(char *buf, char *fmt, ...);
+```
+
+Same format engine as `printf`, but writes to a `char *` buffer instead of UART. The output is null-terminated. Useful for building strings to send to an OLED or other non-UART output.
+
+```c
+char line[32];
+sprintf(line, "Temp %d.%d C", 23, 5);   // line = "Temp 23.5 C\0"
+ssd_puts(line);                          // send to SSD1306 OLED
+```
+
+Internally, `sprintf` redirects the `__putc` helper to a buffer pointer, calls the shared format engine, null-terminates, and restores UART mode. The redirection is global (not reentrant) — don't call `sprintf` from an interrupt context.
+
 ### sleep
 
 ```c

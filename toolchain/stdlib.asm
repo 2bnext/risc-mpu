@@ -1,12 +1,20 @@
 ; MPU Standard Library
 ; Linked after compiled code. Provides runtime functions.
 
-; ---- __putc: internal helper. Wait for UART idle, send byte in r1. ----
-; Clobbers r4 (status read target). Preserves everything else.
+; ---- __putc: internal helper. Send byte in r1 to UART or buffer. ----
+; If __out_buf is non-zero, stores to the buffer and advances the pointer.
+; Otherwise waits for UART idle and sends to 0xFFFF0000.
+; Clobbers r4 (status read / pointer). Preserves everything else.
 __putc:
+                ld.32   r4, __out_buf
+                bne.32  r4, #0, .tobuf
 .wait:          ld.8    r4, 0xFFFF0004      ; read UART status (busy flag)
                 bne.8   r4, #0, .wait       ; loop while busy
                 st.8    0xFFFF0000, r1      ; send byte
+                ret
+.tobuf:         st.8    [r4], r1            ; store to buffer
+                add.32  r4, #1
+                st.32   __out_buf, r4       ; advance pointer
                 ret
 
 ; ---- putchar(char c) ----
@@ -60,6 +68,24 @@ setleds:
                 pop     r6                          ; restore r6
                 ret
 
+; ---- sprintf(char *buf, char *fmt, ...) ----
+; Like printf but writes to a char buffer instead of UART.
+; Null-terminates the output. Uses the shared format engine below.
+;   [sp+4]=buf, [sp+8]=fmt, [sp+12]=arg0, ...
+; After saves:
+;   [sp+20]=buf, [sp+24]=fmt, [sp+28]=arg0, ...
+sprintf:
+                push    r6
+                push    r5
+                push    r4
+                push    r3
+                ld.32   r6, __out_buf       ; save previous __out_buf in r6
+                ld.32   r1, [sp+20]         ; buf
+                st.32   __out_buf, r1        ; redirect output to buffer
+                ld.32   r5, [sp+24]         ; fmt
+                ld.32   r3, #28             ; first vararg at [sp+28]
+                jmp     __printf_scan
+
 ; ---- printf(char *fmt, ...) ----
 ; Variadic printf supporting: %d %s %c %x %%
 ; After saving r3-r6 (4 saves = 16 bytes):
@@ -71,18 +97,20 @@ printf:
                 push    r5
                 push    r4
                 push    r3
-                ld.32   r5, [sp+20]     ; r5 = format string pointer
+                ld.32   r6, __out_buf       ; save previous __out_buf in r6 (normally 0)
+                ld.32   r5, [sp+20]         ; r5 = format string pointer
                 ld.32   r3, #24             ; r3 = offset to first vararg
 
-; ---- Main scan loop ----
-.scan:
+; ---- Shared format engine (entered from printf or sprintf) ----
+; r5 = format string pointer, r3 = sp offset to next vararg, r6 = saved __out_buf.
+__printf_scan:
                 ld.8    r1, [r5++]          ; next format char
                 beq.8   r1, #0, .ret        ; null terminator -> done
                 ld.32   r4, #37             ; '%' = 37
                 beq.8   r1, r4, .spec       ; format specifier
                 ; Regular character: send to UART
                 call    __putc
-                jmp     .scan
+                jmp     __printf_scan
 
 ; ---- Format specifier dispatch ----
 .spec:
@@ -100,20 +128,20 @@ printf:
                 beq.8   r1, r4, .pct
                 ; Unknown specifier: print as-is
                 call    __putc
-                jmp     .scan
+                jmp     __printf_scan
 
 ; ---- %c: print character ----
 .chr:
                 ld.32   r1, [sp][r3+0]      ; load char arg
                 add.32  r3, #4              ; advance to next arg
                 call    __putc
-                jmp     .scan
+                jmp     __printf_scan
 
 ; ---- %%: print literal '%' ----
 .pct:
                 ld.32   r1, #37
                 call    __putc
-                jmp     .scan
+                jmp     __printf_scan
 
 ; ---- %s: print string ----
 .str:
@@ -127,7 +155,7 @@ printf:
                 jmp     .strl
 .strd:
                 pop     r5                          ; restore fmt pointer
-                jmp     .scan
+                jmp     __printf_scan
 
 ; ---- %d: print signed decimal ----
 .dec:
@@ -173,7 +201,7 @@ printf:
 .ddn:
                 pop     r3                          ; restore arg offset
                 pop     r5                          ; restore fmt pointer
-                jmp     .scan
+                jmp     __printf_scan
 
 ; ---- %x: print hex ----
 .hex:
@@ -212,14 +240,20 @@ printf:
 .xdn:
                 pop     r3                          ; restore arg offset
                 pop     r5                          ; restore fmt pointer
-                jmp     .scan
+                jmp     __printf_scan
 
 ; ---- Return ----
 .ret:
-                pop     r3                          ; restore r3
-                pop     r4                          ; restore r4
-                pop     r5                          ; restore r5
-                pop     r6                          ; restore r6
+                ; If writing to a buffer (sprintf), null-terminate.
+                ld.32   r1, __out_buf
+                beq.32  r1, #0, .ret2
+                clr     r2
+                st.8    [r1], r2            ; write '\0'
+.ret2:          st.32   __out_buf, r6       ; restore previous __out_buf (0 for printf)
+                pop     r3
+                pop     r4
+                pop     r5
+                pop     r6
                 ret
 
 ; ---- gpio_set_dir(int mask) ----
@@ -1799,6 +1833,9 @@ _strcat_p:   db 0x00, 0x00, 0x00, 0x00
 _S_empty:    db 0x00
 
 ; ---- Powers of 10 table (little-endian 32-bit, zero sentinel) ----
+; Output redirection for sprintf. 0 = UART (default), non-zero = buffer pointer.
+__out_buf: db 0,0,0,0
+
 __printf_pow10:
                 db 0x00, 0xCA, 0x9A, 0x3B
                 db 0x00, 0xE1, 0xF5, 0x05

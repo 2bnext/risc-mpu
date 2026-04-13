@@ -149,13 +149,15 @@ Branch instructions (BEQ, BNE, BLT, BGT, BLE, BGE) use a different payload layou
 |-------------|---------|----------------------------------------------------|
 | reg_or_imm  | [19]    | 0 = compare against register, 1 = 3-bit immediate  |
 | cmp_operand | [18:16] | Register select (r0-sp) or immediate (0-7)         |
-| target      | [15:0]  | Branch target address (16-bit, covers full 64KB)    |
+| offset      | [15:0]  | Signed PC-relative offset in bytes (±32 KB range)   |
+
+The branch target is computed as `PC + sign_extend(offset)`. The 16-bit signed range covers ±32 KB, which is more than the full 64 KB code space.
 
 The size suffix affects comparison: `.8` compares lower 8 bits (sign-extended), `.16` lower 16 bits, `.32` full 32-bit. All comparisons are signed.
 
 ## Instruction Index
 
-The MPU has 22 native opcodes. The assembler also accepts five pseudo-instructions (`clr`, `ldi`, `jmp`, `push`, `pop`) that expand to one or two native instructions; the CPU never sees them, but they're how you should write assembly by hand. Both kinds appear in the alphabetical reference below — the table here groups them by function. Note that a register-to-register move is just `ld.32 rD, rS` — AGU mode 00 makes the source register the operand, so `ld` already *is* the move instruction. No dedicated pseudo is needed.
+The MPU has 21 native opcodes (0–20; slot 21 is free). The assembler also accepts four pseudo-instructions (`clr`, `ldi`, `push`, `pop`) that expand to one or two native instructions; the CPU never sees them, but they're how you should write assembly by hand. Both kinds appear in the alphabetical reference below — the table here groups them by function. Note that a register-to-register move is just `ld.32 rD, rS` — AGU mode 00 makes the source register the operand, so `ld` already *is* the move instruction. No dedicated pseudo is needed.
 
 ### Data movement
 
@@ -202,16 +204,13 @@ The MPU has 22 native opcodes. The assembler also accepts five pseudo-instructio
 | `bgt`        | 9      | Branch if greater than (signed)                |
 | `ble`        | 10     | Branch if less than or equal (signed)          |
 | `bge`        | 11     | Branch if greater than or equal (signed)       |
-| `jmp target` | pseudo | Unconditional jump (`beq.32 r0, #0, target`)   |
-
-### Subroutines
+### Subroutines and jumps
 
 | Mnemonic     | Opcode | Description                                              |
 |--------------|--------|----------------------------------------------------------|
-| `call`       | 17     | Push return address (PC+4) onto sp, jump (16-bit target) |
-| `callr rD`   | 21     | Indirect call: push PC+4, jump to address in `rD`        |
+| `call`       | 17     | Push PC+4 onto sp, jump to AGU target (label, register, or memory) |
 | `ret`        | 18     | Pop return address from sp, jump to it                   |
-| `jmpr rD`    | 20     | Indirect jump: PC = `rD` (no stack push)                 |
+| `jmp`        | 20     | Unconditional jump to AGU target (label, register, or memory) |
 
 ### Control
 
@@ -564,69 +563,49 @@ bne.16 r1, #7, .next        ; branch if low 16 bits of r1 (sign-extended) != 7
 
 ### CALL (Call Subroutine)
 
-**Encoding:** `10001 | --- | -- | - | - | ---- | target[15:0]` (opcode 17)
+**Encoding:** `10001 | 000 | sz | rv | ai | payload` (opcode 17)
 
-Push the return address (PC + 4) onto the stack and jump to the **16-bit absolute target** in the low half of the payload. The stack pointer is sp, which is decremented by 4 before the store. Does **not** use the AGU.
+Push the return address (PC + 4) onto the stack and jump to the target. The target is resolved through the **AGU**, so all addressing modes work: immediate (label), register-direct (`call r2`), and memory-indirect (`call [r2+4]` for vtable dispatch).
 
-The rd, size, reg_value, addr_imm, and payload[19:16] fields are present in the encoding but ignored by the hardware. (The upper 4 bits of the payload are reserved for future use.)
+**Pipeline:**
 
-**Pipeline:** In EXECUTE, the hardware performs three actions simultaneously: decrements sp by 4, issues a 32-bit memory write of (PC + 4) to the new sp address, and latches the 16-bit zero-extended target address into an internal `call_target` register. Waits in MEM for `mem_ready`. In WB, sets PC to the latched `call_target`.
+- **Immediate / register-direct** (AGU reports `is_immediate=1`): target is available in EXECUTE. Push return address to stack in MEM, set PC in WB. **5 cycles.**
+- **Memory-indirect** (`is_immediate=0`): EXECUTE issues a memory read for the target address. MEM waits for the target. WB issues the stack write (push return address). A dedicated S_CALL_WR state waits for the stack write to complete, then sets PC. **7 cycles.**
 
-**Operation:**
-
-```
-EXECUTE:
-    sp = sp - 4
-    mem[sp] = PC + 4              (return address)
-    call_target = {16'd0, payload[15:0]}
-
-WB:
-    PC = call_target
-```
-
-**Target address range:** 16 bits — covers the entire 64KB code space (0x0000–0xFFFF). The branch instructions use the same 16-bit target field, so call and branch targets are interchangeable.
-
-**Examples:**
-
-```
-call my_function             ; push PC+4, jump to my_function
-call 0x100                   ; push PC+4, jump to address 0x100
-```
-
-**Notes:**
-
-- CALL always uses sp as the stack pointer, regardless of the rd field.
-- Nested calls work naturally: each CALL pushes a return address, and each RET pops one.
-- For function pointers and indirect calls, see `CALLR`.
-
----
-
-### CALLR (Call Register) — indirect call
-
-**Encoding:** `10101 | rd | -- | - | - | --------------------` (opcode 21)
-
-Indirect call: push (PC + 4) and jump to the address in `rD`. Same stack semantics as `CALL`, but the target comes from a register instead of the immediate field. Unlocks function pointers, dispatch tables, and dynamic linking.
-
-**Operation:**
+**Operation (immediate / register-direct):**
 
 ```
 EXECUTE:
     sp = sp - 4
     mem[sp] = PC + 4
-    call_target = (rd == 0) ? 0 : regs[rd]
+    call_target = AGU immediate value
 
 WB:
     PC = call_target
 ```
 
+**Operation (memory-indirect):**
+
+```
+EXECUTE:  mem_read(AGU effective address)
+MEM:      wait for target from memory
+WB:       sp = sp - 4; mem[sp] = PC + 4
+CALL_WR:  wait for stack write; PC = target
+```
+
 **Examples:**
 
 ```
-ld.32   r2, #handler         ; load function address into r2
-callr   r2                   ; push PC+4, jump to handler
+call    my_function          ; direct call (label → immediate)
+call    r2                   ; indirect call via register (function pointer)
+call    [r2+4]               ; vtable dispatch — read target from memory, call it
 ```
 
-The C compiler emits `callr` automatically when the call target is a variable rather than a function name — see [cc.md](toolchain/cc.md) for the function-pointer syntax.
+**Notes:**
+
+- Bare labels in the assembler are automatically encoded as immediates (`#label`), not absolute addresses. This means `call foo` jumps *to* `foo`, it doesn't read from address `foo`.
+- Nested calls work naturally: each CALL pushes a return address, and each RET pops one.
+- The C compiler emits `call r2` for function-pointer calls (previously used the now-removed `callr`).
 
 ---
 
@@ -661,59 +640,29 @@ clr.16 r3                    ; r3[15:0] = 0; r3[31:16] unchanged
 
 ---
 
-### JMP (Unconditional Jump) — pseudo
+### JMP (Unconditional Jump)
 
-**Type:** Pseudo-instruction. The assembler expands it into a single BEQ comparing `r0` against the immediate `0`. Since `r0` is hardwired to zero, the comparison `0 == 0` is always true, so the branch is always taken.
+**Encoding:** `10100 | 000 | sz | rv | ai | payload` (opcode 20)
 
-**Expansion:**
+Unconditional jump. The target is resolved through the **AGU**, so all addressing modes work: immediate (label), register-direct (`jmp r2`), and memory-indirect (`jmp [r2+4]` for jump tables).
 
-```
-jmp target   →   beq.32 r0, #0, target
-```
+**Pipeline:**
 
-**Encoding:** identical to the BEQ form above — a single 32-bit instruction with the BEQ opcode (6).
-
-**Examples:**
-
-```
-jmp .loop                    ; jump to local label
-jmp main                     ; jump to global label
-jmp 0x100                    ; jump to absolute address
-```
-
-**Notes:**
-
-- The target is a 16-bit absolute address (0x0000–0xFFFF), the same as any other branch.
-- This is *the* unconditional jump for compile-time targets. For runtime targets in a register, use `JMPR`.
-
----
-
-### JMPR (Indirect Jump)
-
-**Encoding:** `10100 | rd | -- | - | - | --------------------` (opcode 20)
-
-Set PC to the value in `rD`. No stack push, no return address. The size, rv, ai, and payload fields are ignored.
-
-**Operation:**
-
-```
-PC = (rd == 0) ? 0 : regs[rd]
-```
+- **Immediate / register-direct**: target available in EXECUTE, set PC directly. **3 cycles.**
+- **Memory-indirect**: issue memory read in EXECUTE, set PC from `mem_rdata` in WB. **5 cycles.**
 
 **Examples:**
 
 ```
-ld.32   r2, #handler         ; load address
-jmpr    r2                   ; PC = handler
-
-ld.32   r2, [r3+8]           ; load address from a dispatch table
-jmpr    r2                   ; tail-call into the handler
+jmp .loop                    ; jump to label (immediate)
+jmp r2                       ; jump to address in register
+jmp [r2+4]                   ; jump through a table entry
 ```
 
 **Notes:**
 
-- Useful for tail calls, computed jumps, and switch tables.
-- For an indirect call that *also* pushes a return address, use `CALLR`.
+- Bare labels are automatically encoded as immediates by the assembler.
+- For an unconditional jump that also pushes a return address, use `call`.
 
 ---
 
