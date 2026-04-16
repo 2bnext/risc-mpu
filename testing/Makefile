@@ -1,5 +1,8 @@
 TOOLCHAIN := ../toolchain
 
+# Build any .mpu from a .c / .bas / .pas / .asm in c/, basic/, pascal/, asm/.
+# e.g. make c/hello.mpu, make basic/primes.mpu, make asm/hello.mpu
+
 %.mpu: %.c
 	python3 $(TOOLCHAIN)/cc.py $<
 
@@ -12,7 +15,20 @@ TOOLCHAIN := ../toolchain
 %.mpu: %.asm
 	python3 $(TOOLCHAIN)/asm.py --opcodes $<
 
-clean:
-	rm -f *.mpu
+# Convenience: build every source under a language folder.
+C_SRCS     := $(wildcard c/*.c)
+BASIC_SRCS := $(wildcard basic/*.bas)
+PAS_SRCS   := $(wildcard pascal/*.pas)
+ASM_SRCS   := $(wildcard asm/*.asm)
 
-.PHONY: clean
+c:      $(C_SRCS:.c=.mpu)
+basic:  $(BASIC_SRCS:.bas=.mpu)
+pascal: $(PAS_SRCS:.pas=.mpu)
+asm:    $(ASM_SRCS:.asm=.mpu)
+
+all: c basic pascal asm
+
+clean:
+	rm -f c/*.mpu c/*.img c/*.s basic/*.mpu pascal/*.mpu asm/*.mpu
+
+.PHONY: all c basic pascal asm clean

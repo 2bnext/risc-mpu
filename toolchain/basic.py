@@ -52,15 +52,21 @@ def tokenize(src):
         elif c.isdigit():
             if src[i:i+2] in ('0x', '0X'):
                 j = i + 2
-                while j < n and src[j] in '0123456789abcdefABCDEF':
+                while j < n and (src[j] in '0123456789abcdefABCDEF_'):
                     j += 1
-                toks.append(('NUM', int(src[i+2:j], 16), line))
+                toks.append(('NUM', int(src[i+2:j].replace('_', ''), 16), line))
+                i = j
+            elif src[i:i+2] in ('0b', '0B'):
+                j = i + 2
+                while j < n and (src[j] in '01_'):
+                    j += 1
+                toks.append(('NUM', int(src[i+2:j].replace('_', ''), 2), line))
                 i = j
             else:
                 j = i
-                while j < n and src[j].isdigit():
+                while j < n and (src[j].isdigit() or src[j] == '_'):
                     j += 1
-                toks.append(('NUM', int(src[i:j]), line))
+                toks.append(('NUM', int(src[i:j].replace('_', '')), line))
                 i = j
         elif c == '"':
             j = i + 1
@@ -588,9 +594,9 @@ class Compiler:
             self.emit(f'                sub.32  sp, #4')
             self.emit(f'                st.32   [sp], r2')          # push left
             if op == '*':
-                self.emit(f'                call    __mul')
+                self.emit(f'                call    __smul')
             else:
-                self.emit(f'                call    __div')
+                self.emit(f'                call    __sdiv')
             self.emit(f'                add.32  sp, #8')
         return t
 
@@ -703,6 +709,35 @@ class Compiler:
         raise SyntaxError(f"Line {t[2]}: expected value, got {k}")
 
 
+def preprocess(source, base_dir, _included=None):
+    """Expand INCLUDE "file" lines. Circular/duplicate includes are skipped."""
+    if _included is None:
+        _included = set()
+    out = []
+    for line in source.split('\n'):
+        stripped = line.strip()
+        # Match: INCLUDE "filename" (case-insensitive)
+        if len(stripped) > 8 and stripped[:7].upper() == 'INCLUDE' and stripped[7] in ' \t':
+            rest = stripped[7:].strip()
+            if rest.startswith('"') and rest.endswith('"'):
+                fname = rest[1:-1]
+                fpath = os.path.join(base_dir, fname)
+                if fpath in _included:
+                    continue
+                _included.add(fpath)
+                try:
+                    with open(fpath) as f:
+                        inc_source = f.read()
+                except FileNotFoundError:
+                    print(f"error: INCLUDE file not found: {fname}", file=sys.stderr)
+                    sys.exit(1)
+                inc_dir = os.path.dirname(os.path.abspath(fpath))
+                out.append(preprocess(inc_source, inc_dir, _included))
+                continue
+        out.append(line)
+    return '\n'.join(out)
+
+
 def main():
     args = sys.argv[1:]
     save_asm = False
@@ -722,8 +757,17 @@ def main():
         print(f"error: input file not found: {inp}", file=sys.stderr)
         sys.exit(1)
 
-    c = Compiler()
-    asm = c.compile(src)
+    src = preprocess(src, os.path.dirname(os.path.abspath(inp)))
+
+    try:
+        c = Compiler()
+        asm = c.compile(src)
+    except SyntaxError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     stdlib = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'stdlib.asm')
     if os.path.exists(stdlib):

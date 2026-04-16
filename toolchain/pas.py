@@ -78,16 +78,29 @@ def tokenize(src):
             while i < n and src[i] != '\n':
                 i += 1
         elif c.isdigit():
-            j = i
-            while j < n and src[j].isdigit():
-                j += 1
-            toks.append(('NUM', int(src[i:j]), line))
-            i = j
+            if src[i:i+2] in ('0b', '0B'):
+                j = i + 2
+                while j < n and (src[j] in '01_'):
+                    j += 1
+                toks.append(('NUM', int(src[i+2:j].replace('_', ''), 2), line))
+                i = j
+            else:
+                j = i
+                while j < n and (src[j].isdigit() or src[j] == '_'):
+                    j += 1
+                toks.append(('NUM', int(src[i:j].replace('_', '')), line))
+                i = j
         elif c == '$':                          # $hex literal
             j = i + 1
-            while j < n and src[j] in '0123456789abcdefABCDEF':
+            while j < n and (src[j] in '0123456789abcdefABCDEF_'):
                 j += 1
-            toks.append(('NUM', int(src[i+1:j], 16), line))
+            toks.append(('NUM', int(src[i+1:j].replace('_', ''), 16), line))
+            i = j
+        elif c == '%':                          # %binary literal (Pascal convention)
+            j = i + 1
+            while j < n and (src[j] in '01_'):
+                j += 1
+            toks.append(('NUM', int(src[i+1:j].replace('_', ''), 2), line))
             i = j
         elif c == "'":                          # 'string'
             j = i + 1
@@ -749,7 +762,7 @@ class Compiler:
             self.push_r1()
             self.gen_unary()
             if op in ('*', 'DIV', 'MOD'):
-                helper = {'*': '__mul', 'DIV': '__div', 'MOD': '__mod'}[op]
+                helper = {'*': '__smul', 'DIV': '__sdiv', 'MOD': '__smod'}[op]
                 self.emit('                ld.32   r2, [r0][sp+=4]')
                 self.temp_depth -= 1
                 self.push_r1()                # right (tracked)
@@ -888,6 +901,35 @@ __sar:
 """
 
 
+def preprocess(source, base_dir, _included=None):
+    """Expand Turbo Pascal-style include directive: {$I 'file'} or {$I "file"}.
+    Also accepts bare filenames: {$I filename.pas}.
+    Circular/duplicate includes are silently skipped.
+    """
+    import re
+    if _included is None:
+        _included = set()
+    pattern = re.compile(r"\{\$I\s+['\"]?([^'\"}\s]+)['\"]?\s*\}", re.IGNORECASE)
+
+    def replace(match):
+        fname = match.group(1)
+        fpath = os.path.join(base_dir, fname)
+        if fpath in _included:
+            return ''
+        _included.add(fpath)
+        try:
+            with open(fpath) as f:
+                inc_source = f.read()
+        except FileNotFoundError:
+            print(f"error: {{$I}} include file not found: {fname}", file=sys.stderr)
+            sys.exit(1)
+        inc_dir = os.path.dirname(os.path.abspath(fpath))
+        return preprocess(inc_source, inc_dir, _included)
+
+    # Iterate because includes can contain more includes; replace handles recursion.
+    return pattern.sub(replace, source)
+
+
 def main():
     args = sys.argv[1:]
     save_asm = False
@@ -907,8 +949,17 @@ def main():
         print(f"error: input file not found: {inp}", file=sys.stderr)
         sys.exit(1)
 
-    c = Compiler()
-    body_asm = c.compile(src)
+    src = preprocess(src, os.path.dirname(os.path.abspath(inp)))
+
+    try:
+        c = Compiler()
+        body_asm = c.compile(src)
+    except SyntaxError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
 
     asm = body_asm + PROLOGUE
 
