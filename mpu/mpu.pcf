@@ -24,3 +24,10 @@ set_io i2c_sda 26
 # network between adc_out, the analog input, and adc_in.
 set_io adc_in  27
 set_io adc_out 28
+
+# SPI flash — same pins the iCE40 uses to load its own bitstream.
+# After configuration the FPGA is free to drive them to read user data.
+set_io flash_sck  15
+set_io flash_ss   16
+set_io flash_si   14
+set_io flash_so   17
