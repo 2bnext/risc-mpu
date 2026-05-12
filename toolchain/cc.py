@@ -1814,6 +1814,7 @@ def main():
     import asm as _asm
     asm = _asm.to_pseudo_ops(asm)
     asm = _asm.hide_r0(asm)
+    asm = _asm.drop_default_size(asm)
 
     if save_asm:
         s_file = input_file.rsplit('.', 1)[0] + '.s'

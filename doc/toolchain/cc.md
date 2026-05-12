@@ -55,19 +55,19 @@ In addition to decimal and hex (`0xFF`), the compiler supports:
 
 | C type     | Size    | ISA suffix | Notes                                     |
 |------------|---------|------------|-------------------------------------------|
-| `int`      | 32 bits | `.32`      | Signed, the default                       |
+| `int`      | 32 bits | (default)  | Signed, the default                       |
 | `char`     | 8 bits  | `.8`       | Used for byte loads/stores                |
 | `int8_t`   | 8 bits  | `.8`       | Same as `char`                            |
 | `uint8_t`  | 8 bits  | `.8`       | Same as `char` (signedness not enforced)  |
 | `int16_t`  | 16 bits | `.16`      | Native 16-bit, uses the ISA's `.16` ops   |
 | `uint16_t` | 16 bits | `.16`      | Same width, signedness not enforced        |
-| `int32_t`  | 32 bits | `.32`      | Same as `int`                             |
-| `uint32_t` | 32 bits | `.32`      | Same as `int` (signedness not enforced)   |
+| `int32_t`  | 32 bits | (default)  | Same as `int`                             |
+| `uint32_t` | 32 bits | (default)  | Same as `int` (signedness not enforced)   |
 | `void`     | —       | —          | Function return type only                 |
-| pointers   | 32 bits | `.32`      | `int *`, `char *`, `uint8_t *`, etc.      |
+| pointers   | 32 bits | (default)  | `int *`, `char *`, `uint8_t *`, etc.      |
 | arrays     | n bytes | `.8`       | `char buf[N];` — fixed-size, byte-indexed |
 
-These are first-class types, not aliases — the compiler emits `ld.8`, `st.8` for 8-bit types, `ld.16`, `st.16` for 16-bit types, and `ld.32`, `st.32` for 32-bit types. This maps directly to the MPU's three ISA size suffixes.
+These are first-class types, not aliases — the compiler emits `ld.8`, `st.8` for 8-bit types, `ld.16`, `st.16` for 16-bit types, and bare `ld`, `st` (the `.32` default) for 32-bit types. This maps directly to the MPU's three ISA sizes.
 
 All types use 4-byte stack slots (locals are always word-aligned). Sub-word loads are zero-extended: the compiler clears the destination register before a `.8` or `.16` load to avoid the ISA's size-merge gotcha. There is no sign extension on load — `int8_t` and `uint8_t` behave identically at the load level, as do `int16_t` and `uint16_t`.
 
@@ -107,12 +107,12 @@ The C-standard integer type modifiers are supported as built-in keywords:
 |-------------------|---------|------------|------------------------------------|
 | `short`           | 16 bits | `.16`      | Same as `int16_t`                  |
 | `unsigned short`  | 16 bits | `.16`      | Same as `uint16_t`                 |
-| `long`            | 32 bits | `.32`      | Same as `int` (no 64-bit support)  |
-| `unsigned long`   | 32 bits | `.32`      | Same as `unsigned int`             |
-| `unsigned int`    | 32 bits | `.32`      | Signedness not enforced            |
+| `long`            | 32 bits | (default)  | Same as `int` (no 64-bit support)  |
+| `unsigned long`   | 32 bits | (default)  | Same as `unsigned int`             |
+| `unsigned int`    | 32 bits | (default)  | Signedness not enforced            |
 | `unsigned char`   | 8 bits  | `.8`       | Same as `uint8_t`                  |
-| `signed`          | 32 bits | `.32`      | Same as `int`                      |
-| `unsigned`        | 32 bits | `.32`      | Same as `unsigned int`             |
+| `signed`          | 32 bits | (default)  | Same as `int`                      |
+| `unsigned`        | 32 bits | (default)  | Same as `unsigned int`             |
 
 Compound forms like `unsigned short int`, `signed long int` are accepted (the trailing `int` is optional, matching C). `signed` and `unsigned` without a following type default to `int`.
 
@@ -141,7 +141,7 @@ void main() {
 }
 ```
 
-`&funcname` evaluates to the code address of the function. The compiler tracks all function names and emits a `call label` for direct calls (target known at compile time) or a `call rN` for indirect calls (target loaded from a variable). Both use the same `call` opcode — the AGU handles the addressing mode. The runtime cost is one extra `ld.32` to load the pointer into a register before the indirect call.
+`&funcname` evaluates to the code address of the function. The compiler tracks all function names and emits a `call label` for direct calls (target known at compile time) or a `call rN` for indirect calls (target loaded from a variable). Both use the same `call` opcode — the AGU handles the addressing mode. The runtime cost is one extra `ld ` to load the pointer into a register before the indirect call.
 
 Caveats:
 - No type checking on function pointers — the variable type is just `int`.

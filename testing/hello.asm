@@ -1,6 +1,6 @@
  ; hello.asm - Hello, World! for the MPU
 
-                ld.32   r6, #hello      ; r6 = pointer to string
+                ld      r6, #hello      ; r6 = pointer to string
 .loop:
                 ld.8    r1, [r6++]      ; load next byte, advance pointer
                 beq.8   r1, #0, stop    ; if null terminator, we're done

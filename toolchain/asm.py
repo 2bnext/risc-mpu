@@ -323,7 +323,7 @@ def encode_branch(args, labels, scope='', addr=0):
     return rd, payload
 
 
-SIZE_NAMES = {0: '.8', 1: '.16', 2: '.32'}
+SIZE_NAMES = {0: '.8', 1: '.16', 2: ''}    # .32 is the default — bare opcode
 
 OPCODE_NAMES = {v: k.upper() for k, v in OPCODES.items()}
 
@@ -397,6 +397,23 @@ def format_db_listing(addr, data, source_line):
     return f'{addr:04X}: {hex_str:<18s} {"db":<44s} {source_line}'
 
 
+_SIZED_MNEMS = (
+    'ld', 'st', 'add', 'sub', 'and', 'or', 'xor',
+    'shl', 'shr', 'asr',
+    'beq', 'bne', 'blt', 'bgt', 'ble', 'bge',
+    'clr', 'ldh',
+)
+_DROP32_RE = re.compile(rf'\b({"|".join(_SIZED_MNEMS)})\.32\b')
+
+
+def drop_default_size(asm_text):
+    """Drop the `.32` size suffix from sized opcodes. `.32` is the default
+    when no size suffix is supplied, so the bare mnemonic encodes the same
+    instruction. Replacing `.32` with three spaces preserves the operand
+    column alignment used by the compilers and the stdlib."""
+    return _DROP32_RE.sub(lambda m: m.group(1) + '   ', asm_text)
+
+
 def hide_r0(asm_text):
     """Strip the bookkeeping `r0` slot from AGU operands so the surface
     syntax matches what a human would write. Equivalences applied:
@@ -426,10 +443,10 @@ def hide_r0(asm_text):
 
 _PS_REG = r'(?:r[0-7]|sp)'
 _PS_TAIL = r'(\s*(?:;.*)?)$'   # optional trailing whitespace + line comment
-_PS_PUSH_A = re.compile(rf'^(\s*)sub\.32\s+sp,\s*#4{_PS_TAIL}')
-_PS_PUSH_B = re.compile(rf'^\s*st\.32\s+\[sp\],\s*({_PS_REG}){_PS_TAIL}')
-_PS_POP    = re.compile(rf'^(\s*)ld\.32\s+({_PS_REG}),\s*\[r0\]\[sp\+=4\]{_PS_TAIL}')
-_PS_CLR    = re.compile(rf'^(\s*)ld(\.(?:8|16|32))\s+({_PS_REG}),\s*r0{_PS_TAIL}')
+_PS_PUSH_A = re.compile(rf'^(\s*)sub(?:\.32)?\s+sp,\s*#4{_PS_TAIL}')
+_PS_PUSH_B = re.compile(rf'^\s*st(?:\.32)?\s+\[sp\],\s*({_PS_REG}){_PS_TAIL}')
+_PS_POP    = re.compile(rf'^(\s*)ld(?:\.32)?\s+({_PS_REG}),\s*\[r0\]\[sp\+=4\]{_PS_TAIL}')
+_PS_CLR    = re.compile(rf'^(\s*)ld(\.(?:8|16|32))?\s+({_PS_REG}),\s*r0{_PS_TAIL}')
 
 
 def _ps_clean_tail(t):
@@ -490,8 +507,8 @@ def to_pseudo_ops(asm_text):
         m = _PS_CLR.match(line)
         if m:
             tail = _ps_clean_tail(m.group(4))
-            sz = m.group(2)                              # ".8" / ".16" / ".32"
-            sz_suffix = '' if sz == '.32' else sz        # default clr is .32
+            sz = m.group(2)                              # ".8" / ".16" / ".32" or None
+            sz_suffix = '' if sz in (None, '.32') else sz  # default clr is .32
             out.append(_ps_format(m.group(1), f'clr{sz_suffix:<4} {m.group(3)}', tail))
             i += 1
             continue

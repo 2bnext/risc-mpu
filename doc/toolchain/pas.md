@@ -136,7 +136,7 @@ $EC       { hexadecimal — Pascal convention }
 -1
 ```
 
-The compiler emits a single `ld.32` for values that fit in the 20-bit signed immediate, and an `ld + ldh` pair for anything larger, so constants like `1048576` and `419430400` work correctly even though the immediate field is only 20 bits.
+The compiler emits a single `ld ` for values that fit in the 20-bit signed immediate, and an `ld + ldh` pair for anything larger, so constants like `1048576` and `419430400` work correctly even though the immediate field is only 20 bits.
 
 ### String literals
 
@@ -181,7 +181,7 @@ writeln('chip id = ', id);
 
 `gpio_read` is a function and must be called with empty parentheses (`gpio_read()`) when used in an expression.
 
-`sar` exists because the MPU's hardware `shr` is logical — for the BME280 reference compensation math (and anything else that uses `>>` on a signed value), you need sign-extending right shift instead. Since v0.2 the ISA has a native `asr` opcode, so `sar(x, n)` now calls a thin wrapper (`__sar`) that just forwards to one `asr.32` instruction — it used to be a software loop.
+`sar` exists because the MPU's hardware `shr` is logical — for the BME280 reference compensation math (and anything else that uses `>>` on a signed value), you need sign-extending right shift instead. Since v0.2 the ISA has a native `asr` opcode, so `sar(x, n)` now calls a thin wrapper (`__sar`) that just forwards to one `asr ` instruction — it used to be a software loop.
 
 ## What is missing
 

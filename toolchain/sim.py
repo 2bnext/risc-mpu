@@ -41,7 +41,7 @@ OP_NAMES = {
     19: 'ASR', 20: 'JMP',
 }
 
-SIZE_NAMES = {0: '.8', 1: '.16', 2: '.32'}
+SIZE_NAMES = {0: '.8', 1: '.16', 2: ''}    # .32 is the default — show as bare opcode
 
 MASK32 = 0xFFFFFFFF
 

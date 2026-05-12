@@ -107,7 +107,7 @@ Requires [Yosys](https://github.com/YosysHQ/yosys), [nextpnr](https://github.com
 ## Example
 
 ```
-                ld.32   r6, #hello
+                ld      r6, #hello
 .loop:
                 ld.8    r1, [r6++]
                 beq.8   r1, #0, stop

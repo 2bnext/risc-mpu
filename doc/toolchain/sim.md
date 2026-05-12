@@ -39,9 +39,9 @@ If the input filename has no extension, `.mpu` is appended automatically — so 
 `--trace` prints one line per executed instruction:
 
 ```
-PC=0x0040  op=ld.32 r1, #42                 r1 <- 0x0000002a
-PC=0x0044  op=add.32 r1, #1                 r1 <- 0x0000002b
-PC=0x0048  op=st.32  _counter, r1
+PC=0x0040  op=ld    r1, #42                 r1 <- 0x0000002a
+PC=0x0044  op=add    r1, #1                 r1 <- 0x0000002b
+PC=0x0048  op=st     _counter, r1
 ```
 
 Use this when you have a program that runs but produces the wrong answer — the trace will show you exactly which instruction wrote which value. For long-running programs the trace is very large; pipe it through `grep` or `head` and increase `--max-cycles` if needed.

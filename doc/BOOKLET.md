@@ -148,8 +148,8 @@ In practice, you'll develop intuition for the common values and won't need to co
 The assembler uses the `0x` prefix for hex literals:
 
 ```
-ld.32   r1, #0xFF           ; r1 = 255
-ld.32   r2, #0x1234          ; r2 = 4660
+ld      r1, #0xFF           ; r1 = 255
+ld      r2, #0x1234          ; r2 = 4660
 st.8    0xFFFF0000, r1      ; write to UART at hex address
 ```
 
@@ -166,7 +166,7 @@ Hex is especially natural for bit manipulation. Each hex digit controls 4 bits i
 0x80 = 1000 0000     (bit 7 only — sign bit of a byte)
 ```
 
-When you see `and.32 r1, #0xFF`, you immediately know: "keep the lower 8 bits, clear everything else." In decimal that would be `and.32 r1, #255`, which doesn't tell you anything about bits.
+When you see `and r1, #0xFF`, you immediately know: "keep the lower 8 bits, clear everything else." In decimal that would be `and r1, #255`, which doesn't tell you anything about bits.
 
 ---
 
@@ -326,8 +326,8 @@ There is no ROM, no flash, no separate instruction and data memory. Everything i
 
 Having r0 hardwired to zero is a classic RISC trick — MIPS, SPARC, RISC-V all do it — and it's the single most load-bearing decision in the MPU's design. It gives you a constant you always need without burning an instruction to load it, and it lets you express common operations elegantly:
 
-- `clr r1` (i.e. `ld.32 r1, r0`) sets r1 to zero.
-- `beq.32 r0, #0, target` is an unconditional jump (r0 always equals 0). The assembler exposes this as `jmp target`.
+- `clr r1` (i.e. `ld r1, r0`) sets r1 to zero.
+- `beq r0, #0, target` is an unconditional jump (r0 always equals 0). The assembler exposes this as `jmp target`.
 - `[r0][r3]` means "the address in r3" (base of zero plus index). The assembler lets you write this as `[r3]`.
 - `[r0][sp+=4]` is "load from sp, then increment sp by 4" — i.e. a stack pop. The assembler lets you write this as `[sp+=4]`, and the `pop r1` pseudo-instruction wraps the whole thing.
 
@@ -369,16 +369,16 @@ Five bits of opcode give room for 32 instructions (19 are used). Three bits of r
 
 **Uniformity**: the decoder doesn't need to look at the opcode to know where the fields are. The opcode, register, size, and addressing mode are always in the same bit positions. This makes the hardware trivially simple: you wire bits [31:27] to the opcode decoder, bits [26:24] to the register file, and so on. No variable-length instruction complications, no mode-dependent field positions.
 
-**Orthogonality**: nine instructions (LD, ST, ADD, SUB, AND, OR, XOR, SHL, SHR) all route their payload through the same Address Generation Unit. The AGU doesn't know or care which instruction is asking. It just decodes the addressing mode and produces either an effective address or an immediate value. This means every ALU instruction can work with a register, an immediate, a memory indirect, or a post-increment load, all for free. The hardware cost of supporting `add.32 r1, [r2][r3+=4]` is zero beyond what LD already needed.
+**Orthogonality**: nine instructions (LD, ST, ADD, SUB, AND, OR, XOR, SHL, SHR) all route their payload through the same Address Generation Unit. The AGU doesn't know or care which instruction is asking. It just decodes the addressing mode and produces either an effective address or an immediate value. This means every ALU instruction can work with a register, an immediate, a memory indirect, or a post-increment load, all for free. The hardware cost of supporting `add r1, [r2][r3+=4]` is zero beyond what LD already needed.
 
 **Composability**: the few instructions combine to express complex operations:
 
-- No PUSH/POP? Use `st.32 [sp+=-4], r1` (store and decrement) and `ld.32 r1, [sp+=4]` (load and increment).
-- No MOV? Use `ld.32 r1, r2` (register-direct AGU mode).
-- No NOT? Use `xor.32 r1, #-1` (XOR with all ones).
-- No NEG? Use `xor.32 r1, #-1` then `add.32 r1, #1` (two's complement).
-- No unconditional jump? Use `beq.32 r0, #0, target` (r0 is always zero).
-- No NOP? Well, there is one, but `add.32 r0, #0` would also work.
+- No PUSH/POP? Use `st [sp+=-4], r1` (store and decrement) and `ld r1, [sp+=4]` (load and increment).
+- No MOV? Use `ld r1, r2` (register-direct AGU mode).
+- No NOT? Use `xor r1, #-1` (XOR with all ones).
+- No NEG? Use `xor r1, #-1` then `add r1, #1` (two's complement).
+- No unconditional jump? Use `beq r0, #0, target` (r0 is always zero).
+- No NOP? Well, there is one, but `add r0, #0` would also work.
 
 This is the RISC philosophy at its purest: a small number of composable primitives that cover a large space of operations. Every special case was resisted. There is no instruction that does something only one instruction can do, except where the hardware truly requires it (CALL and RET, which manipulate both the stack and the PC atomically).
 
@@ -391,7 +391,7 @@ Let's write the classic first program. The MPU has a UART for serial output: wri
 ```
 ; hello.asm - Hello, World! for the MPU
 
-                ld.32   r6, #hello      ; r6 = pointer to string
+                ld      r6, #hello      ; r6 = pointer to string
 .loop:
                 ld.8    r1, [r6++]      ; load next byte, advance pointer
                 beq.8   r1, #0, stop    ; if null terminator, we're done
@@ -415,7 +415,7 @@ hello:          db      'Hello, world!\0'
 
 Let's walk through this line by line.
 
-**`ld.32 r6, #hello`** loads the address of the `hello` label into r6. The `#` means immediate: the assembler resolves `hello` to its address and encodes it as a 20-bit value in the payload. After this, r6 points to the first byte of "Hello, world!".
+**`ld r6, #hello`** loads the address of the `hello` label into r6. The `#` means immediate: the assembler resolves `hello` to its address and encodes it as a 20-bit value in the payload. After this, r6 points to the first byte of "Hello, world!".
 
 **`ld.8 r1, [r6++]`** is where the AGU shows its power. This is shorthand for `ld.8 r1, [r0][r6+=1]`: load one byte from the address in r6 (base r0 + index r6), then increment r6 by 1. It reads the current character and advances the pointer in a single instruction. This is post-increment addressing mode (mode 11).
 
@@ -423,9 +423,9 @@ Let's walk through this line by line.
 
 **`call output`** pushes the return address onto the stack and jumps to the `output` subroutine. Internally: sp decreases by 4, the address of the next instruction (PC + 4) is written to [sp], and PC is set to the address of `output`.
 
-**`jmp .loop`** is the pseudo-instruction for `beq.32 r0, #0, .loop`. Since r0 is always zero and the immediate is zero, the branch is always taken. Unconditional jump.
+**`jmp .loop`** is the pseudo-instruction for `beq r0, #0, .loop`. Since r0 is always zero and the immediate is zero, the branch is always taken. Unconditional jump.
 
-**`ld.8 r2, 0xFFFF0004`** loads a byte from an absolute address. No `#`, no brackets: the assembler encodes this as reg_value=1, addr_imm=0, meaning the payload is a memory address, not an immediate. The UART status register is read into r2. We use `ld.8` rather than `ld.32` because the busy flag lives in bit 0 of a single byte — and matching the load width to the compare width (`bne.8` below) avoids the size-merge gotcha where stale upper bits in r2 from a previous instruction could fool a 32-bit comparison.
+**`ld.8 r2, 0xFFFF0004`** loads a byte from an absolute address. No `#`, no brackets: the assembler encodes this as reg_value=1, addr_imm=0, meaning the payload is a memory address, not an immediate. The UART status register is read into r2. We use `ld.8` rather than `ld ` because the busy flag lives in bit 0 of a single byte — and matching the load width to the compare width (`bne.8` below) avoids the size-merge gotcha where stale upper bits in r2 from a previous instruction could fool a 32-bit comparison.
 
 **`bne.8 r2, #0, .wait`** loops back if the UART busy flag (bit 0) is nonzero. The `.8` suffix means we only look at the lower byte.
 
@@ -454,11 +454,15 @@ The MPU has a flat, unified memory space. Programs and data share the same 64 KB
 
 Memory can be accessed in three sizes:
 
-| Suffix | Width | Use Case |
-|---|---|---|
-| `.8` | 1 byte | Characters, flags, small values |
-| `.16` | 2 bytes | 16-bit values |
-| `.32` | 4 bytes | Addresses, integers, most data |
+| Suffix    | Width   | Use Case                        |
+|-----------|---------|---------------------------------|
+| `.8`      | 1 byte  | Characters, flags, small values |
+| `.16`     | 2 bytes | 16-bit values                   |
+| (default) | 4 bytes | Addresses, integers, most data  |
+
+The default (no suffix) is 32-bit — write `ld r1, [r2]` for a word load. The
+assembler still accepts an explicit `.32` for back-compat, but the toolchain
+output never emits it.
 
 When you load a `.8` or `.16` value, only the corresponding bits of the destination register are written; the upper bits are preserved. When you store, only the relevant bytes are written.
 
@@ -473,16 +477,16 @@ Value:     0xEF   0xBE   0xAD   0xDE
 
 ### Alignment
 
-Memory accesses should be naturally aligned: `.32` reads from addresses divisible by 4, `.16` from addresses divisible by 2. The SPRAM interface relies on alignment for correct byte extraction.
+Memory accesses should be naturally aligned: 32-bit reads from addresses divisible by 4, `.16` from addresses divisible by 2. The SPRAM interface relies on alignment for correct byte extraction.
 
 ### Example: Storing and Loading Data
 
 ```
 ; Store the value 42 at address 0x200, then load it back
-                ld.32   r1, #42
-                ld.32   r2, #0x200
-                st.32   [r2], r1         ; mem[0x200] = 42
-                ld.32   r3, [r2]         ; r3 = mem[0x200] = 42
+                ld      r1, #42
+                ld      r2, #0x200
+                st      [r2], r1         ; mem[0x200] = 42
+                ld      r3, [r2]         ; r3 = mem[0x200] = 42
 ```
 
 ---
@@ -504,14 +508,14 @@ With only 8 registers, you must think carefully about allocation. Here are the c
 Small values (that fit in 20 bits signed, i.e., -524288 to 524287):
 
 ```
-                ld.32   r1, #100         ; r1 = 100
-                ld.32   r1, #-1          ; r1 = 0xFFFFFFFF
+                ld      r1, #100         ; r1 = 100
+                ld      r1, #-1          ; r1 = 0xFFFFFFFF
 ```
 
 Large 32-bit values require LD + LDH:
 
 ```
-                ld.32   r1, #0xDBEEF     ; r1 = sign_ext(0xDBEEF) = 0xFFFDBEEF
+                ld      r1, #0xDBEEF     ; r1 = sign_ext(0xDBEEF) = 0xFFFDBEEF
                 ldh     r1, #0xDEADB     ; r1[31:12] = 0xDEADB -> r1 = 0xDEADBEEF
 ```
 
@@ -520,11 +524,11 @@ The trick: LD sets all 32 bits (via sign extension of the 20-bit immediate), the
 ### Register-to-Register Operations
 
 ```
-                ld.32   r1, r2           ; r1 = r2 (copy)
-                add.32  r1, r2           ; r1 = r1 + r2
-                sub.32  r1, r2           ; r1 = r1 - r2
-                and.32  r1, r2           ; r1 = r1 & r2
-                xor.32  r1, r2           ; r1 = r1 ^ r2
+                ld      r1, r2           ; r1 = r2 (copy)
+                add     r1, r2           ; r1 = r1 + r2
+                sub     r1, r2           ; r1 = r1 - r2
+                and     r1, r2           ; r1 = r1 & r2
+                xor     r1, r2           ; r1 = r1 ^ r2
 ```
 
 These all use AGU mode 00 (register direct), where the payload encodes a register select and the AGU returns that register's value as the operand. The MPU doesn't need a separate "register-register" instruction encoding, as the AGU gives it for free.
@@ -532,11 +536,11 @@ These all use AGU mode 00 (register direct), where the payload encodes a registe
 ### Clearing a Register
 
 ```
-                clr     r1               ; pseudo for ld.32 r1, r0
-                ld.32   r1, #0           ; also works (immediate zero)
+                clr     r1               ; pseudo for ld    r1, r0
+                ld      r1, #0           ; also works (immediate zero)
 ```
 
-The first form is the `clr` pseudo-instruction, which expands to `ld.32 r1, r0` and uses the register-direct AGU mode. The second uses the immediate path. Both produce the same result and run in the same number of cycles, but `clr` is what you should write — it tells the reader exactly what's happening.
+The first form is the `clr` pseudo-instruction, which expands to `ld r1, r0` and uses the register-direct AGU mode. The second uses the immediate path. Both produce the same result and run in the same number of cycles, but `clr` is what you should write — it tells the reader exactly what's happening.
 
 ---
 
@@ -575,15 +579,15 @@ When `rv=0` (bit 21), the payload encodes registers and an addressing mode:
 
 Consider what you get from these four modes:
 
-**Simple register access** (mode 00): `add.32 r1, r3` means "add the value in r3 to r1." The AGU returns r3's value as an immediate.
+**Simple register access** (mode 00): `add r1, r3` means "add the value in r3 to r1." The AGU returns r3's value as an immediate.
 
-**Array indexing** (mode 01): `ld.32 r1, [r2][r3]` loads from address r2+r3. If r2 is the base of an array and r3 is an offset, this is array[offset].
+**Array indexing** (mode 01): `ld r1, [r2][r3]` loads from address r2+r3. If r2 is the base of an array and r3 is an offset, this is array[offset].
 
-**Struct field access** (mode 10): `ld.32 r1, [r2+8]` loads from r2+8. The constant offset 8 selects a specific field within a structure pointed to by r2. The full hardware form is `[r2][r0+8]`, but since r0 is hardwired to zero the assembler lets you skip it.
+**Struct field access** (mode 10): `ld r1, [r2+8]` loads from r2+8. The constant offset 8 selects a specific field within a structure pointed to by r2. The full hardware form is `[r2][r0+8]`, but since r0 is hardwired to zero the assembler lets you skip it.
 
 **String/array traversal** (mode 11): `ld.8 r1, [r6++]` loads a byte from r6 and increments r6 by 1 after. This is the classic `*ptr++` operation. You can walk through an array without a separate increment instruction.
 
-**Stack push/pop**: the architecture has no dedicated push/pop instructions, but it doesn't need them. `st.32 [sp+=-4], r1` decrements sp by 4 and stores r1 — that's `push r1`. `ld.32 r1, [sp+=4]` loads from sp and increments sp by 4 — that's `pop r1`. Both `push rN` and `pop rN` are also available as assembler pseudo-instructions for readability.
+**Stack push/pop**: the architecture has no dedicated push/pop instructions, but it doesn't need them. `st [sp+=-4], r1` decrements sp by 4 and stores r1 — that's `push r1`. `ld r1, [sp+=4]` loads from sp and increments sp by 4 — that's `pop r1`. Both `push rN` and `pop rN` are also available as assembler pseudo-instructions for readability.
 
 ### Assembler Shorthands
 
@@ -597,10 +601,10 @@ The architecture has 8 registers, but `r0` is hardwired to zero, so it's never t
 | `[r6--]`      | `[r0][r6+=-1]` | Post-decrement by 1                              |
 | `[sp+=-4]`    | `[r0][sp+=-4]` | Pre-decrement (used for push)                    |
 | `[sp+=4]`     | `[r0][sp+=4]`  | Post-increment (used for pop)                    |
-| `push rN`     | `sub.32 sp,#4`<br>`st.32 [sp], rN` | Two-instruction pseudo                       |
-| `pop rN`      | `ld.32 rN, [sp+=4]`                | Single-instruction pseudo                    |
-| `clr rD`      | `ld.32 rD, r0`                     | Clear `rD` (since r0 is always 0)            |
-| `jmp target`  | `beq.32 r0, #0, target`            | Unconditional branch (r0 is always 0)        |
+| `push rN`     | `sub sp,#4`<br>`st [sp], rN` | Two-instruction pseudo                       |
+| `pop rN`      | `ld rN, [sp+=4]`                | Single-instruction pseudo                    |
+| `clr rD`      | `ld rD, r0`                     | Clear `rD` (since r0 is always 0)            |
+| `jmp target`  | `beq r0, #0, target`            | Unconditional branch (r0 is always 0)        |
 
 The verbose form is still legal — the assembler will accept either — but the shorthand is the convention used everywhere in the toolchain output and the standard library, and it's what you should write by hand.
 
@@ -616,7 +620,7 @@ branch.size rd, comparand, target
 
 The comparand is either a register or a small immediate (0-7). The target is a 16-bit absolute address, covering the full 64 KB.
 
-All comparisons are **signed**. The size suffix controls the comparison width: `.8` sign-extends both operands from 8 bits, `.16` from 16 bits, `.32` uses the full value.
+All comparisons are **signed**. The size suffix controls the comparison width: `.8` sign-extends both operands from 8 bits, `.16` from 16 bits, and the default (no suffix) compares the full 32-bit value.
 
 ### A Simple Loop
 
@@ -625,17 +629,17 @@ Count from 1 to 10, printing each digit:
 ```
 ; count.asm - Count 1 to 10
 
-                ld.32   r3, #1           ; r3 = counter, starting at 1
-                ld.32   r4, #10          ; r4 = limit
+                ld      r3, #1           ; r3 = counter, starting at 1
+                ld      r4, #10          ; r4 = limit
 
-.loop:          ld.32   r1, r3           ; r1 = current count
-                add.32  r1, #48          ; convert to ASCII ('0' = 48)
+.loop:          ld      r1, r3           ; r1 = current count
+                add     r1, #48          ; convert to ASCII ('0' = 48)
                 call    output           ; print digit
-                ld.32   r1, #10          ; newline
+                ld      r1, #10          ; newline
                 call    output
 
-                add.32  r3, #1           ; counter++
-                ble.32  r3, r4, .loop    ; loop while counter <= 10
+                add     r3, #1           ; counter++
+                ble     r3, r4, .loop    ; loop while counter <= 10
 
 .halt:          jmp     .halt            ; done
 
@@ -648,7 +652,7 @@ output:
                 end
 ```
 
-The key line is `ble.32 r3, r4, .loop`: "branch to .loop if r3 <= r4 (signed)." When r3 reaches 11, the condition fails and execution falls through to the halt loop.
+The key line is `ble r3, r4, .loop`: "branch to .loop if r3 <= r4 (signed)." When r3 reaches 11, the condition fails and execution falls through to the halt loop.
 
 ### Conditional Execution
 
@@ -656,9 +660,9 @@ There's no conditional move or predicated execution. Use branches:
 
 ```
 ; r1 = abs(r1)
-                bge.32  r1, #0, .positive
-                xor.32  r1, #-1          ; bitwise NOT
-                add.32  r1, #1           ; +1 = two's complement negate
+                bge     r1, #0, .positive
+                xor     r1, #-1          ; bitwise NOT
+                add     r1, #1           ; +1 = two's complement negate
 .positive:
 ```
 
@@ -666,7 +670,7 @@ There's no conditional move or predicated execution. Use branches:
 
 ```
 ; while (r3 != 0) { body }
-.while:         beq.32  r3, #0, .end
+.while:         beq     r3, #0, .end
                 ; ... body ...
                 jmp     .while
 .end:
@@ -678,7 +682,7 @@ There's no conditional move or predicated execution. Use branches:
 ; do { body } while (r3 != 0);
 .top:
                 ; ... body ...
-                bne.32  r3, #0, .top
+                bne     r3, #0, .top
 ```
 
 ---
@@ -702,12 +706,12 @@ The MPU has dedicated CALL and RET instructions that use sp as the stack pointer
 ; multiply r1 by r2, result in r1
 ; Uses r3 as accumulator (caller-saved)
 multiply:
-                ld.32   r3, #0           ; accumulator = 0
-.loop:          beq.32  r2, #0, .done    ; while r2 != 0
-                add.32  r3, r1           ;   accumulator += r1
-                sub.32  r2, #1           ;   r2--
+                ld      r3, #0           ; accumulator = 0
+.loop:          beq     r2, #0, .done    ; while r2 != 0
+                add     r3, r1           ;   accumulator += r1
+                sub     r2, #1           ;   r2--
                 jmp     .loop
-.done:          ld.32   r1, r3           ; result in r1
+.done:          ld      r1, r3           ; result in r1
                 ret
 ```
 
@@ -718,14 +722,14 @@ If your subroutine uses registers that the caller might need, save them on the s
 ```
 my_function:
                 ; prologue: save callee-saved registers
-                st.32   [sp+=-4], r6     ; push r6
-                st.32   [sp+=-4], r5     ; push r5
+                st      [sp+=-4], r6     ; push r6
+                st      [sp+=-4], r5     ; push r5
 
                 ; ... function body using r5 and r6 ...
 
                 ; epilogue: restore and return
-                ld.32   r5, [sp+=4]      ; pop r5
-                ld.32   r6, [sp+=4]      ; pop r6
+                ld      r5, [sp+=4]      ; pop r5
+                ld      r6, [sp+=4]      ; pop r6
                 ret
 ```
 
@@ -737,10 +741,10 @@ Arguments are passed on the stack. The caller pushes arguments right-to-left, ca
 
 ```
 ; calling putchar('A')
-                ld.32   r1, #65          ; 'A'
-                st.32   [sp+=-4], r1     ; push argument
+                ld      r1, #65          ; 'A'
+                st      [sp+=-4], r1     ; push argument
                 call    putchar
-                add.32  sp, #4           ; clean up stack (1 arg * 4 bytes)
+                add     sp, #4           ; clean up stack (1 arg * 4 bytes)
 ```
 
 Inside the function, arguments are accessed relative to sp with an offset that accounts for the saved registers and the return address.
@@ -757,7 +761,7 @@ sp + 4        saved r6  (pushed by function)
 sp + 0        saved r5  (pushed by function)   <-- sp points here
 ```
 
-To access argument 0: `ld.32 r1, [sp][r0+12]` (base sp, index r0=0, offset 12).
+To access argument 0: `ld r1, [sp][r0+12]` (base sp, index r0=0, offset 12).
 
 ---
 
@@ -771,49 +775,49 @@ The MPU has AND, OR, XOR, SHL, and SHR. These are the building blocks for all bi
 
 ```
 ; Extract bits [7:4] of r1 into r1
-                shr.32  r1, #4           ; shift right by 4
-                and.32  r1, #0xF         ; mask to 4 bits
+                shr     r1, #4           ; shift right by 4
+                and     r1, #0xF         ; mask to 4 bits
 ```
 
 **Set a bit:**
 
 ```
 ; Set bit 3 of r1
-                or.32   r1, #8           ; 8 = 1 << 3
+                or      r1, #8           ; 8 = 1 << 3
 ```
 
 **Clear a bit:**
 
 ```
 ; Clear bit 3 of r1 (need the inverted mask)
-                ld.32   r2, #8           ; mask
-                xor.32  r2, #-1          ; invert: r2 = 0xFFFFFFF7
-                and.32  r1, r2           ; clear bit 3
+                ld      r2, #8           ; mask
+                xor     r2, #-1          ; invert: r2 = 0xFFFFFFF7
+                and     r1, r2           ; clear bit 3
 ```
 
 **Toggle a bit:**
 
 ```
 ; Toggle bit 3 of r1
-                xor.32  r1, #8           ; flip bit 3
+                xor     r1, #8           ; flip bit 3
 ```
 
 **Bitwise NOT:**
 
 ```
-                xor.32  r1, #-1          ; r1 = ~r1
+                xor     r1, #-1          ; r1 = ~r1
 ```
 
 **Multiply by a power of 2:**
 
 ```
-                shl.32  r1, #3           ; r1 = r1 * 8
+                shl     r1, #3           ; r1 = r1 * 8
 ```
 
 **Unsigned divide by a power of 2:**
 
 ```
-                shr.32  r1, #3           ; r1 = r1 / 8 (unsigned)
+                shr     r1, #3           ; r1 = r1 / 8 (unsigned)
 ```
 
 ---
@@ -825,48 +829,48 @@ Let's put it all together. This program counts from 0 to 99 and prints each numb
 ```
 ; count99.asm - Print numbers 0 through 99
 
-                ld.32   r3, #0           ; counter
-                ld.32   r6, #10          ; constant 10 (too large for branch immediate)
+                ld      r3, #0           ; counter
+                ld      r6, #10          ; constant 10 (too large for branch immediate)
 
 .loop:
                 ; Compute tens digit
-                ld.32   r1, r3           ; r1 = counter
-                ld.32   r5, #0           ; tens = 0
-.tens:          blt.32  r1, r6, .units   ; r1 < 10?
-                sub.32  r1, r6
-                add.32  r5, #1
+                ld      r1, r3           ; r1 = counter
+                ld      r5, #0           ; tens = 0
+.tens:          blt     r1, r6, .units   ; r1 < 10?
+                sub     r1, r6
+                add     r5, #1
                 jmp     .tens
 
 .units:
                 ; r5 = tens digit, r1 = units digit
                 ; Print tens digit (skip if zero and counter < 10)
-                blt.32  r3, r6, .skip_tens
-                ld.32   r2, r5
-                add.32  r2, #48          ; ASCII '0'
+                blt     r3, r6, .skip_tens
+                ld      r2, r5
+                add     r2, #48          ; ASCII '0'
                 st.8    0xFFFF0000, r2
-                ld.32   r4, #1500
-.w1:            sub.32  r4, #1
-                bne.32  r4, #0, .w1
+                ld      r4, #1500
+.w1:            sub     r4, #1
+                bne     r4, #0, .w1
 
 .skip_tens:
                 ; Print units digit
-                add.32  r1, #48          ; ASCII '0'
+                add     r1, #48          ; ASCII '0'
                 st.8    0xFFFF0000, r1
-                ld.32   r4, #1500
-.w2:            sub.32  r4, #1
-                bne.32  r4, #0, .w2
+                ld      r4, #1500
+.w2:            sub     r4, #1
+                bne     r4, #0, .w2
 
                 ; Print newline
-                ld.32   r1, r6           ; 10 = '\n'
+                ld      r1, r6           ; 10 = '\n'
                 st.8    0xFFFF0000, r1
-                ld.32   r4, #1500
-.w3:            sub.32  r4, #1
-                bne.32  r4, #0, .w3
+                ld      r4, #1500
+.w3:            sub     r4, #1
+                bne     r4, #0, .w3
 
                 ; Increment and loop
-                add.32  r3, #1
-                ld.32   r4, #100
-                blt.32  r3, r4, .loop
+                add     r3, #1
+                ld      r4, #100
+                blt     r3, r4, .loop
 
 .halt:          jmp     .halt
 
@@ -902,19 +906,19 @@ The compiler generates:
                 jmp     __start
 
 main:
-                sub.32  sp, #4
-                st.32   [sp], r6             ; save return address register
-                ld.32   r1, #1
-                add.32  r1, #2               ; compute 1 + 2 = 3
-                sub.32  sp, #4
-                st.32   [sp], r1             ; push argument: 3
-                ld.32   r1, #__str_1
-                sub.32  sp, #4
-                st.32   [sp], r1             ; push argument: format string
+                sub     sp, #4
+                st      [sp], r6             ; save return address register
+                ld      r1, #1
+                add     r1, #2               ; compute 1 + 2 = 3
+                sub     sp, #4
+                st      [sp], r1             ; push argument: 3
+                ld      r1, #__str_1
+                sub     sp, #4
+                st      [sp], r1             ; push argument: format string
                 call    printf
-                add.32  sp, #8               ; clean up 2 arguments
+                add     sp, #8               ; clean up 2 arguments
 .epilogue:
-                ld.32   r6, [sp+=4]          ; restore saved register
+                ld      r6, [sp+=4]          ; restore saved register
                 ret
 
 __start:

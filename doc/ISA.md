@@ -22,8 +22,8 @@
 `r0` reading as a constant zero is a classic 1980s RISC trick (MIPS, SPARC, RISC-V all do this) and it's the single most load-bearing decision in the MPU's design. It does five distinct jobs that would otherwise each need their own opcode bit or instruction:
 
 1. **Free zero immediate.** Anywhere an instruction takes a register source, you can use `r0` to mean "zero" without burning an instruction to load it.
-2. **Register clear.** `ld.32 rD, r0` is "set rD to zero" in one instruction. The assembler exposes this as the `clr rD` pseudo.
-3. **Unconditional branch.** `beq.32 r0, #0, target` is always taken because `0 == 0` is always true. The assembler exposes this as `jmp target`.
+2. **Register clear.** `ld rD, r0` is "set rD to zero" in one instruction. The assembler exposes this as the `clr rD` pseudo.
+3. **Unconditional branch.** `beq r0, #0, target` is always taken because `0 == 0` is always true. The assembler exposes this as `jmp target`.
 4. **"No base" / "no index" placeholder in AGU operands.** The AGU's two-bracket form is `[Rbase][Ridx+offset]`. Anywhere you don't want a base or don't want an index, you put `r0` and the address arithmetic just works (`0 + something = something`). This is why `[r0][sp+=4]` is the canonical pop, `[r0][r6+=1]` is the canonical post-increment, and `[r2][r0+8]` is the canonical struct-field load.
 5. **Discard sink.** Writes to `r0` are silently ignored, so you can target it when you need an instruction's *side effect* (e.g. address computation, future flag updates) without producing a value you care about.
 
@@ -70,7 +70,12 @@ All instructions are 32 bits wide.
 |------|--------|--------------------|
 | 00   | .8     | unsigned 8-bit     |
 | 01   | .16    | unsigned 16-bit    |
-| 10   | .32    | unsigned 32-bit    |
+| 10   | (none) | unsigned 32-bit    |
+
+`.32` is the **default**: any sized opcode written without a suffix encodes
+size = `10` (32-bit). The assembler still accepts an explicit `.32` for
+back-compat, but the toolchain and the standard library use the bare form
+everywhere — write `ld r1, r2`, not `ld.32 r1, r2`.
 
 ## Addressing Modes (AGU)
 
@@ -104,7 +109,7 @@ Payload layout:
 | 10   | [Rbase][Ridx + offset]    | mem[Rbase + Ridx + sign_ext(off)] | none                        |
 | 11   | [Rbase][Ridx += offset]   | mem[Rbase + Ridx]                 | Ridx += sign_ext(offset)    |
 
-Mode 00 is register direct: the operand is the register value itself, no memory access. This enables register-to-register operations (e.g. `ld.32 r1, r2`, `add.32 r1, r3`).
+Mode 00 is register direct: the operand is the register value itself, no memory access. This enables register-to-register operations (e.g. `ld r1, r2`, `add r1, r3`).
 
 Mode 11 computes the address before the writeback. The index register is updated after the memory operation completes.
 
@@ -125,7 +130,7 @@ Combined with the `push`, `pop`, `clr`, and `jmp` pseudo-instructions, the surfa
 ```asm
 my_func:
                 push    r6                  ; save r6
-                ld.32   r1, [sp+8]          ; load arg from caller's frame
+                ld      r1, [sp+8]          ; load arg from caller's frame
                 ld.8    r2, [r5++]          ; *p++ idiom
                 pop     r6                  ; restore r6
                 ret
@@ -157,7 +162,7 @@ The size suffix affects comparison: `.8` compares lower 8 bits (sign-extended), 
 
 ## Instruction Index
 
-The MPU has 21 native opcodes (0–20; slot 21 is free). The assembler also accepts four pseudo-instructions (`clr`, `ldi`, `push`, `pop`) that expand to one or two native instructions; the CPU never sees them, but they're how you should write assembly by hand. Both kinds appear in the alphabetical reference below — the table here groups them by function. Note that a register-to-register move is just `ld.32 rD, rS` — AGU mode 00 makes the source register the operand, so `ld` already *is* the move instruction. No dedicated pseudo is needed.
+The MPU has 21 native opcodes (0–20; slot 21 is free). The assembler also accepts four pseudo-instructions (`clr`, `ldi`, `push`, `pop`) that expand to one or two native instructions; the CPU never sees them, but they're how you should write assembly by hand. Both kinds appear in the alphabetical reference below — the table here groups them by function. Note that a register-to-register move is just `ld rD, rS` — AGU mode 00 makes the source register the operand, so `ld` already *is* the move instruction. No dedicated pseudo is needed.
 
 ### Data movement
 
@@ -166,8 +171,8 @@ The MPU has 21 native opcodes (0–20; slot 21 is free). The assembler also acce
 | `ld`           | 1           | Load (immediate, register, absolute, or memory)          |
 | `ldh`          | 2           | Load high 20 bits (combine with `ld` for 32-bit consts)  |
 | `st`           | 3           | Store rd to memory                                       |
-| `clr rD`       | pseudo      | Clear rD to zero (`ld.32 rD, r0`)                        |
-| `ldi rD, #imm` | pseudo (×1–2) | Load any 32-bit constant; one `ld.32` if it fits in 20 bits, else `ld.32` + `ldh` |
+| `clr rD`       | pseudo      | Clear rD to zero (`ld rD, r0`)                        |
+| `ldi rD, #imm` | pseudo (×1–2) | Load any 32-bit constant; one `ld ` if it fits in 20 bits, else `ld ` + `ldh` |
 | `push rN`      | pseudo (×2) | Decrement sp, store rN                                   |
 | `pop rN`       | pseudo      | Load rN from sp, increment sp                            |
 
@@ -253,22 +258,22 @@ For memory operands, the size suffix also controls the memory read width.
 **Examples:**
 
 ```
-add.32 r1, r2               ; r1 = r1 + r2 (register-register, mode 00)
-add.32 r1, #1               ; r1 = r1 + 1 (immediate)
-add.32 r1, #-1              ; r1 = r1 + 0xFFFFFFFF = r1 - 1 (negative immediate)
+add    r1, r2               ; r1 = r1 + r2 (register-register, mode 00)
+add    r1, #1               ; r1 = r1 + 1 (immediate)
+add    r1, #-1              ; r1 = r1 + 0xFFFFFFFF = r1 - 1 (negative immediate)
 add.8  r1, #1               ; r1 = (r1 + 1) & 0xFF (8-bit addition, wraps at 256)
 add.16 r1, #1               ; r1 = (r1 + 1) & 0xFFFF (16-bit addition)
-add.32 r1, [r2]             ; r1 = r1 + mem.32[r2] (memory indirect)
-add.32 r1, [r2][r3]         ; r1 = r1 + mem.32[r2 + r3] (indexed)
-add.32 r1, [r2][r3+8]       ; r1 = r1 + mem.32[r2 + r3 + 8] (indexed+offset)
-add.32 r1, [r6+=4]          ; r1 = r1 + mem.32[r6], then r6 += 4 (post-increment)
-add.32 r1, 0x100            ; r1 = r1 + mem.32[0x100] (absolute)
+add    r1, [r2]             ; r1 = r1 + mem.32[r2] (memory indirect)
+add    r1, [r2][r3]         ; r1 = r1 + mem.32[r2 + r3] (indexed)
+add    r1, [r2][r3+8]       ; r1 = r1 + mem.32[r2 + r3 + 8] (indexed+offset)
+add    r1, [r6+=4]          ; r1 = r1 + mem.32[r6], then r6 += 4 (post-increment)
+add    r1, 0x100            ; r1 = r1 + mem.32[0x100] (absolute)
 ```
 
 **Notes:**
 
 - There is no carry flag or overflow detection. Use branch instructions to check for overflow if needed.
-- `add.32 r1, #-N` is equivalent to `sub.32 r1, #N` for small N.
+- `add r1, #-N` is equivalent to `sub r1, #N` for small N.
 - `add.8 r1, #1` with r1 = 0xFF produces r1 = 0x00 (wraps to zero).
 
 ---
@@ -299,14 +304,14 @@ For memory operands, the size suffix also controls the memory read width.
 **Examples:**
 
 ```
-and.32 r1, #0xFF            ; r1 = r1 & 0xFF (mask lower byte)
+and    r1, #0xFF            ; r1 = r1 & 0xFF (mask lower byte)
 and.8  r1, #0x0F            ; r1 = (r1 & 0x0F) & 0xFF (8-bit result)
-and.32 r1, r2               ; r1 = r1 & r2 (register-register)
-and.32 r1, [r2]             ; r1 = r1 & mem.32[r2] (memory indirect)
-and.32 r1, [r2][r3]         ; r1 = r1 & mem.32[r2 + r3] (indexed)
-and.32 r1, [r2][r3+8]       ; r1 = r1 & mem.32[r2 + r3 + 8] (indexed+offset)
-and.32 r1, [r6+=4]          ; r1 = r1 & mem.32[r6], then r6 += 4 (post-increment)
-and.32 r1, 0x100            ; r1 = r1 & mem.32[0x100] (absolute)
+and    r1, r2               ; r1 = r1 & r2 (register-register)
+and    r1, [r2]             ; r1 = r1 & mem.32[r2] (memory indirect)
+and    r1, [r2][r3]         ; r1 = r1 & mem.32[r2 + r3] (indexed)
+and    r1, [r2][r3+8]       ; r1 = r1 & mem.32[r2 + r3 + 8] (indexed+offset)
+and    r1, [r6+=4]          ; r1 = r1 & mem.32[r6], then r6 += 4 (post-increment)
+and    r1, 0x100            ; r1 = r1 & mem.32[0x100] (absolute)
 ```
 
 **Notes:**
@@ -333,10 +338,10 @@ PC = PC + 4
 **Examples:**
 
 ```
-asr.32 r1, #1               ; r1 = r1 / 2 (signed, rounds toward -inf)
-asr.32 r1, #4               ; r1 = r1 / 16 (signed)
-asr.32 r1, r2               ; variable shift, signed
-asr.32 r1, [r2]             ; memory operand
+asr    r1, #1               ; r1 = r1 / 2 (signed, rounds toward -inf)
+asr    r1, #4               ; r1 = r1 / 16 (signed)
+asr    r1, r2               ; variable shift, signed
+asr    r1, [r2]             ; memory operand
 ```
 
 **Notes:**
@@ -379,15 +384,15 @@ else:
 **Examples:**
 
 ```
-beq.32 r1, #0, .done        ; branch to .done if r1 == 0
-beq.32 r1, r2, .match       ; branch to .match if r1 == r2
+beq    r1, #0, .done        ; branch to .done if r1 == 0
+beq    r1, r2, .match       ; branch to .match if r1 == r2
 beq.8  r1, #0, .end         ; branch if low byte of r1 is 0 (sign-extended comparison)
-beq.32 r0, #0, .always      ; always branches (r0 is always 0, 0 == 0)
+beq    r0, #0, .always      ; always branches (r0 is always 0, 0 == 0)
 ```
 
 **Notes:**
 
-- `beq.32 r0, #0, target` is the canonical unconditional jump, exposed as the `jmp` pseudo-instruction.
+- `beq r0, #0, target` is the canonical unconditional jump, exposed as the `jmp` pseudo-instruction.
 - The immediate range is 0–7 only. To compare against larger values, load the value into a register and use register comparison.
 - The target is an absolute address, not a PC-relative offset.
 
@@ -417,14 +422,14 @@ else:
 **Examples:**
 
 ```
-bge.32 r1, #0, .positive    ; branch if r1 >= 0 (non-negative)
-bge.32 r1, r2, .ge          ; branch if r1 >= r2 (signed)
+bge    r1, #0, .positive    ; branch if r1 >= 0 (non-negative)
+bge    r1, r2, .ge          ; branch if r1 >= r2 (signed)
 bge.8  r1, #1, .has_data    ; branch if low byte of r1 (signed) >= 1
 ```
 
 **Notes:**
 
-- `bge.32 r1, #0, target` is the standard "branch if non-negative" idiom.
+- `bge r1, #0, target` is the standard "branch if non-negative" idiom.
 
 ---
 
@@ -452,8 +457,8 @@ else:
 **Examples:**
 
 ```
-bgt.32 r1, r2, .bigger      ; branch if r1 > r2 (signed)
-bgt.32 r1, #0, .positive    ; branch if r1 > 0 (strictly positive)
+bgt    r1, r2, .bigger      ; branch if r1 > r2 (signed)
+bgt    r1, #0, .positive    ; branch if r1 > 0 (strictly positive)
 bgt.8  r1, #3, .high        ; branch if low byte of r1 (signed) > 3
 ```
 
@@ -483,8 +488,8 @@ else:
 **Examples:**
 
 ```
-ble.32 r1, #7, .small       ; branch if r1 <= 7 (signed)
-ble.32 r1, r2, .not_greater ; branch if r1 <= r2 (signed)
+ble    r1, #7, .small       ; branch if r1 <= 7 (signed)
+ble    r1, r2, .not_greater ; branch if r1 <= r2 (signed)
 ```
 
 ---
@@ -513,8 +518,8 @@ else:
 **Examples:**
 
 ```
-blt.32 r1, #5, .small       ; branch if r1 < 5 (signed)
-blt.32 r1, r2, .less        ; branch if r1 < r2 (signed)
+blt    r1, #5, .small       ; branch if r1 < 5 (signed)
+blt    r1, r2, .less        ; branch if r1 < r2 (signed)
 blt.8  r1, #0, .negative    ; branch if low byte of r1 is negative (bit 7 set)
 ```
 
@@ -550,8 +555,8 @@ else:
 
 ```
 bne.8  r2, #0, .wait        ; branch if low byte of r2 != 0 (UART busy loop)
-bne.32 r1, r2, .loop        ; branch if r1 != r2
-bne.32 r1, #0, .nonzero     ; branch if r1 is not zero
+bne    r1, r2, .loop        ; branch if r1 != r2
+bne    r1, #0, .nonzero     ; branch if r1 is not zero
 bne.16 r1, #7, .next        ; branch if low 16 bits of r1 (sign-extended) != 7
 ```
 
@@ -619,7 +624,7 @@ call    [r2+4]               ; vtable dispatch — read target from memory, call
 clr.<sz> rD   →   ld.<sz> rD, r0
 ```
 
-The size suffix is honoured. `clr` (no suffix) defaults to `.32` and clears the entire register. `clr.8` and `clr.16` clear only the low byte or halfword and **preserve the upper bits** — the same size-merge behaviour as `ld.8`/`ld.16`. Use `clr.32` (or just `clr`) when you want a full zero.
+The size suffix is honoured. Bare `clr` defaults to `.32` and clears the entire register. `clr.8` and `clr.16` clear only the low byte or halfword and **preserve the upper bits** — the same size-merge behaviour as `ld.8`/`ld.16`. Use bare `clr` when you want a full zero.
 
 **Encoding:** identical to `ld.<sz> rD, r0` — a single LD with AGU mode 00, source register `r0`. The CPU sees an ordinary LD instruction.
 
@@ -627,16 +632,15 @@ The size suffix is honoured. `clr` (no suffix) defaults to `.32` and clears the 
 
 ```
 clr    r1                    ; r1 = 0  (full 32-bit clear)
-clr.32 r5                    ; same — explicit .32 suffix
 clr.8  r2                    ; r2[7:0] = 0; r2[31:8] unchanged
 clr.16 r3                    ; r3[15:0] = 0; r3[31:16] unchanged
 ```
 
 **Notes:**
 
-- Equivalent in effect to `ld.32 rD, #0`, but reads more clearly as "clear this register". Both forms encode to a single instruction and run in the same number of cycles.
-- The high-level compilers' peephole pass also emits `clr` whenever they would otherwise produce `ld.32 rD, r0`, preserving the original size suffix.
-- For a register-to-register move (non-zero source), just use `ld.32 rD, rS` directly — no pseudo is needed because AGU mode 00 already makes the source register the operand.
+- Equivalent in effect to `ld rD, #0`, but reads more clearly as "clear this register". Both forms encode to a single instruction and run in the same number of cycles.
+- The high-level compilers' peephole pass also emits `clr` whenever they would otherwise produce `ld rD, r0`, preserving the original size suffix.
+- For a register-to-register move (non-zero source), just use `ld rD, rS` directly — no pseudo is needed because AGU mode 00 already makes the source register the operand.
 
 ---
 
@@ -699,22 +703,22 @@ For memory operands, the size suffix also controls how many bytes are read from 
 **Examples:**
 
 ```
-ld.32  r1, r2               ; r1 = r2 (register move, mode 00)
-ld.32  r1, #0x1234          ; r1 = 0x00001234 (immediate, sign-extended)
-ld.32  r1, #-1              ; r1 = 0xFFFFFFFF (negative immediate, sign-extended)
+ld     r1, r2               ; r1 = r2 (register move, mode 00)
+ld     r1, #0x1234          ; r1 = 0x00001234 (immediate, sign-extended)
+ld     r1, #-1              ; r1 = 0xFFFFFFFF (negative immediate, sign-extended)
 ld.8   r2, [r3]             ; r2[7:0] = mem.8[r3], r2[31:8] unchanged
 ld.16  r2, [r3]             ; r2[15:0] = mem.16[r3], r2[31:16] unchanged
-ld.32  r1, [r2][r3]         ; r1 = mem.32[r2 + r3] (indexed, mode 01)
-ld.32  r1, [r2][r3+8]       ; r1 = mem.32[r2 + r3 + 8] (indexed+offset, mode 10)
-ld.32  r1, [r6+=4]          ; r1 = mem.32[r6], then r6 += 4 (post-increment, mode 11)
+ld     r1, [r2][r3]         ; r1 = mem.32[r2 + r3] (indexed, mode 01)
+ld     r1, [r2][r3+8]       ; r1 = mem.32[r2 + r3 + 8] (indexed+offset, mode 10)
+ld     r1, [r6+=4]          ; r1 = mem.32[r6], then r6 += 4 (post-increment, mode 11)
 ld.8   r2, 0xFFFF0004       ; r2[7:0] = mem.8[0xFFFF0004] (absolute UART status read)
 ld.8   r1, [r6++]           ; r1[7:0] = mem.8[r6], r1[31:8] unchanged, r6 += 1
 ```
 
 **Notes:**
 
-- `ld.32 r0, #5` is legal but has no effect (r0 stays zero).
-- `ld.8` preserves the upper 24 bits. To zero-extend a byte load, follow with `and.32 r1, #0xFF` or use `.32` size and mask.
+- `ld r0, #5` is legal but has no effect (r0 stays zero).
+- `ld.8` preserves the upper 24 bits. To zero-extend a byte load, follow with `and r1, #0xFF` or use the default 32-bit size and mask.
 - For post-increment mode, the memory read uses the address *before* writeback. The index register update happens in the WB stage after the load completes.
 - The 20-bit immediate is sign-extended: values 0x00000–0x7FFFF are positive (0 to 524287), values 0x80000–0xFFFFF are negative (−524288 to −1).
 
@@ -749,11 +753,11 @@ The size, reg_value, and addr_imm fields are present in the encoding but ignored
 Example — loading 0xDEADBEEF into r1:
 
 ```
-ld.32  r1, #0xDBEEF         ; r1 = 0xFFFDBEEF (sign-extended: bit 19 is 1)
+ld     r1, #0xDBEEF         ; r1 = 0xFFFDBEEF (sign-extended: bit 19 is 1)
 ldh    r1, #0xDEADB         ; r1[31:12] = 0xDEADB → r1 = 0xDEADBEEF
 ```
 
-How this works: after `ld.32 r1, #0xDBEEF`, r1 holds `0xFFFDBEEF` (the 20-bit value `0xDBEEF` sign-extended, since bit 19 = 1). The lower 12 bits are `0xEEF`. Then `ldh r1, #0xDEADB` replaces bits [31:12] with `0xDEADB`, giving `0xDEADB_EEF` = `0xDEADBEEF`.
+How this works: after `ld r1, #0xDBEEF`, r1 holds `0xFFFDBEEF` (the 20-bit value `0xDBEEF` sign-extended, since bit 19 = 1). The lower 12 bits are `0xEEF`. Then `ldh r1, #0xDEADB` replaces bits [31:12] with `0xDEADB`, giving `0xDEADB_EEF` = `0xDEADBEEF`.
 
 **Examples:**
 
@@ -771,20 +775,20 @@ ldh    r3, #0x00001         ; r3[31:12] = 0x00001, r3[11:0] unchanged
 
 ### LDI (Load Immediate) — pseudo
 
-**Type:** Pseudo-instruction. The assembler picks the shortest expansion: a single `ld.32` if the value fits in the 20-bit signed immediate (−524288 … 524287), or an `ld.32` + `ldh` pair otherwise.
+**Type:** Pseudo-instruction. The assembler picks the shortest expansion: a single `ld ` if the value fits in the 20-bit signed immediate (−524288 … 524287), or an `ld ` + `ldh` pair otherwise.
 
 **Expansion:**
 
 ```
 ldi rD, #N      where -524288 ≤ N ≤ 524287
-                →   ld.32 rD, #N
+                →   ld    rD, #N
 
 ldi rD, #N      where N is outside that range
-                →   ld.32 rD, #(N & 0xFFFFF)
+                →   ld    rD, #(N & 0xFFFFF)
                     ldh   rD, #((N >> 12) & 0xFFFFF)
 ```
 
-The two-instruction form works because `ld.32` writes the lower 20 bits of `rD` (sign-extended), and `ldh` then overwrites the upper 20 bits with the high portion of the constant. The fields overlap by 8 bits — the same bits go in both halves — so the final value is exactly `N`.
+The two-instruction form works because `ld ` writes the lower 20 bits of `rD` (sign-extended), and `ldh` then overwrites the upper 20 bits with the high portion of the constant. The fields overlap by 8 bits — the same bits go in both halves — so the final value is exactly `N`.
 
 **Operand:** `ldi` accepts numeric literals (decimal, hex, binary, negative) and labels or expressions. For literals, the assembler can decide between the one- and two-instruction forms at expand time. For labels and other non-literal operands the address isn't known yet, so `ldi` conservatively reserves two instruction slots.
 
@@ -793,14 +797,14 @@ The two-instruction form works because `ld.32` writes the lower 20 bits of `rD` 
 ```
 ldi    r1, #42                  ; one instruction (fits in 20-bit signed)
 ldi    r1, #-1                  ; one instruction
-ldi    r2, #0xDEADBEEF          ; two instructions: ld.32 r2, #0xDBEEF + ldh r2, #0xDEADB
+ldi    r2, #0xDEADBEEF          ; two instructions: ld    r2, #0xDBEEF + ldh r2, #0xDEADB
 ldi    r3, #1048576             ; two instructions (>= 0x80000)
 ldi    r4, #my_label            ; two instructions (label, conservative)
 ```
 
 **Notes:**
 
-- Use `ldi` whenever you have a runtime constant that might be larger than 20 bits — the assembler will keep it to a single instruction when possible. Use `ld.32 rD, #N` directly when you know the value is small and want to be explicit about that.
+- Use `ldi` whenever you have a runtime constant that might be larger than 20 bits — the assembler will keep it to a single instruction when possible. Use `ld rD, #N` directly when you know the value is small and want to be explicit about that.
 - The high-level compilers (`cc.py`, `basic.py`, `pas.py`) emit `ldi` for every numeric literal so they don't have to think about the 20-bit limit themselves.
 
 ---
@@ -853,20 +857,20 @@ For memory operands, the size suffix also controls the memory read width.
 **Examples:**
 
 ```
-or.32  r1, #0x80            ; r1 = r1 | 0x80 (set bit 7)
+or     r1, #0x80            ; r1 = r1 | 0x80 (set bit 7)
 or.8   r1, #0x80            ; r1 = (r1 | 0x80) & 0xFF (8-bit result)
-or.32  r1, r2               ; r1 = r1 | r2 (register-register)
-or.32  r1, [r2]             ; r1 = r1 | mem.32[r2] (memory indirect)
-or.32  r1, [r2][r3]         ; r1 = r1 | mem.32[r2 + r3] (indexed)
-or.32  r1, [r2][r3+8]       ; r1 = r1 | mem.32[r2 + r3 + 8] (indexed+offset)
-or.32  r1, [r6+=4]          ; r1 = r1 | mem.32[r6], then r6 += 4 (post-increment)
-or.32  r1, 0x100            ; r1 = r1 | mem.32[0x100] (absolute)
+or     r1, r2               ; r1 = r1 | r2 (register-register)
+or     r1, [r2]             ; r1 = r1 | mem.32[r2] (memory indirect)
+or     r1, [r2][r3]         ; r1 = r1 | mem.32[r2 + r3] (indexed)
+or     r1, [r2][r3+8]       ; r1 = r1 | mem.32[r2 + r3 + 8] (indexed+offset)
+or     r1, [r6+=4]          ; r1 = r1 | mem.32[r6], then r6 += 4 (post-increment)
+or     r1, 0x100            ; r1 = r1 | mem.32[0x100] (absolute)
 ```
 
 **Notes:**
 
 - Useful for setting individual bits or combining bit fields.
-- `or.32 r1, r2` with r1 initially zero acts as a register move (same as `ld.32 r1, r2` but less clear).
+- `or r1, r2` with r1 initially zero acts as a register move (same as `ld r1, r2` but less clear).
 
 ---
 
@@ -877,7 +881,7 @@ or.32  r1, 0x100            ; r1 = r1 | mem.32[0x100] (absolute)
 **Expansion:**
 
 ```
-pop rN   →   ld.32 rN, [sp+=4]
+pop rN   →   ld    rN, [sp+=4]
 ```
 
 Loads the 32-bit word at the address in sp into rN, then increments sp by 4. The architecture has no dedicated POP opcode — the AGU's mode-11 writeback does the work in a single instruction.
@@ -898,13 +902,13 @@ pop r1                       ; r1 = mem[sp]; sp += 4
 
 ### PUSH (Push to Stack) — pseudo
 
-**Type:** Pseudo-instruction. The assembler expands it into **two** native instructions — `sub.32 sp, #4` followed by `st.32 [sp], rN`. This is the only multi-word pseudo-op; the assembler runs the expansion before pass 1, so labels still resolve correctly. A label attached to a `push` line points at the first of the two expanded instructions.
+**Type:** Pseudo-instruction. The assembler expands it into **two** native instructions — `sub sp, #4` followed by `st [sp], rN`. This is the only multi-word pseudo-op; the assembler runs the expansion before pass 1, so labels still resolve correctly. A label attached to a `push` line points at the first of the two expanded instructions.
 
 **Expansion:**
 
 ```
-push rN   →   sub.32 sp, #4
-              st.32  [sp], rN
+push rN   →   sub    sp, #4
+              st     [sp], rN
 ```
 
 Decrements sp by 4, then stores rN at the new top of stack. After the sequence, sp points at the pushed value — the conventional "stack grows down, sp points at the top item" model.
@@ -983,19 +987,19 @@ Only the lowest 5 bits of the operand determine the shift amount. The remaining 
 **Examples:**
 
 ```
-shl.32 r1, #8               ; r1 = r1 << 8 (multiply by 256)
-shl.32 r1, #1               ; r1 = r1 << 1 (multiply by 2)
-shl.32 r1, r2               ; r1 = r1 << r2[4:0] (variable shift)
-shl.32 r1, [r2]             ; r1 = r1 << mem.32[r2][4:0] (memory indirect)
-shl.32 r1, [r2][r3]         ; r1 = r1 << mem.32[r2 + r3][4:0] (indexed)
-shl.32 r1, [r2][r3+8]       ; r1 = r1 << mem.32[r2 + r3 + 8][4:0] (indexed+offset)
-shl.32 r1, [r6+=4]          ; r1 = r1 << mem.32[r6][4:0], then r6 += 4
-shl.32 r1, 0x100            ; r1 = r1 << mem.32[0x100][4:0] (absolute)
+shl    r1, #8               ; r1 = r1 << 8 (multiply by 256)
+shl    r1, #1               ; r1 = r1 << 1 (multiply by 2)
+shl    r1, r2               ; r1 = r1 << r2[4:0] (variable shift)
+shl    r1, [r2]             ; r1 = r1 << mem.32[r2][4:0] (memory indirect)
+shl    r1, [r2][r3]         ; r1 = r1 << mem.32[r2 + r3][4:0] (indexed)
+shl    r1, [r2][r3+8]       ; r1 = r1 << mem.32[r2 + r3 + 8][4:0] (indexed+offset)
+shl    r1, [r6+=4]          ; r1 = r1 << mem.32[r6][4:0], then r6 += 4
+shl    r1, 0x100            ; r1 = r1 << mem.32[0x100][4:0] (absolute)
 ```
 
 **Notes:**
 
-- `shl.32 r1, #N` is equivalent to multiplying by 2^N (for N in 0–31).
+- `shl r1, #N` is equivalent to multiplying by 2^N (for N in 0–31).
 - A shift of 0 leaves rd unchanged.
 - Bits shifted out the left side are lost (no carry flag).
 
@@ -1021,20 +1025,20 @@ Only the lowest 5 bits of the operand determine the shift amount. The remaining 
 **Examples:**
 
 ```
-shr.32 r1, #4               ; r1 = r1 >> 4 (unsigned divide by 16)
-shr.32 r1, #1               ; r1 = r1 >> 1 (unsigned divide by 2)
-shr.32 r1, r2               ; r1 = r1 >> r2[4:0] (variable shift)
-shr.32 r1, [r2]             ; r1 = r1 >> mem.32[r2][4:0] (memory indirect)
-shr.32 r1, [r2][r3]         ; r1 = r1 >> mem.32[r2 + r3][4:0] (indexed)
-shr.32 r1, [r2][r3+8]       ; r1 = r1 >> mem.32[r2 + r3 + 8][4:0] (indexed+offset)
-shr.32 r1, [r6+=4]          ; r1 = r1 >> mem.32[r6][4:0], then r6 += 4
-shr.32 r1, 0x100            ; r1 = r1 >> mem.32[0x100][4:0] (absolute)
+shr    r1, #4               ; r1 = r1 >> 4 (unsigned divide by 16)
+shr    r1, #1               ; r1 = r1 >> 1 (unsigned divide by 2)
+shr    r1, r2               ; r1 = r1 >> r2[4:0] (variable shift)
+shr    r1, [r2]             ; r1 = r1 >> mem.32[r2][4:0] (memory indirect)
+shr    r1, [r2][r3]         ; r1 = r1 >> mem.32[r2 + r3][4:0] (indexed)
+shr    r1, [r2][r3+8]       ; r1 = r1 >> mem.32[r2 + r3 + 8][4:0] (indexed+offset)
+shr    r1, [r6+=4]          ; r1 = r1 >> mem.32[r6][4:0], then r6 += 4
+shr    r1, 0x100            ; r1 = r1 >> mem.32[0x100][4:0] (absolute)
 ```
 
 **Notes:**
 
 - This is a **logical** (unsigned) shift. The MSB is always filled with zero. There is no arithmetic right shift instruction; to perform sign-preserving division, you must implement it manually (e.g., save the sign bit, shift, then restore).
-- `shr.32 r1, #N` is equivalent to unsigned division by 2^N.
+- `shr r1, #N` is equivalent to unsigned division by 2^N.
 - Bits shifted out the right side are lost (no carry flag).
 
 ---
@@ -1071,9 +1075,9 @@ This is the reverse of LD (where rd comes first) because it reads more naturally
 
 ```
 st.8   0xFFFF0000, r1       ; mem.8[0xFFFF0000] = r1 (write byte to UART TX)
-st.32  [r3], r1             ; mem.32[r3] = r1 (shorthand for [r3])
-st.32  [r2][r3], r1         ; mem.32[r2 + r3] = r1 (indexed)
-st.32  [r2][r3+8], r1       ; mem.32[r2 + r3 + 8] = r1 (indexed+offset)
+st     [r3], r1             ; mem.32[r3] = r1 (shorthand for [r3])
+st     [r2][r3], r1         ; mem.32[r2 + r3] = r1 (indexed)
+st     [r2][r3+8], r1       ; mem.32[r2 + r3 + 8] = r1 (indexed+offset)
 st.8   #0x41, r2            ; mem.8[r2] = 0x41 (store immediate 'A' to addr in r2)
 ```
 
@@ -1111,23 +1115,23 @@ For memory operands, the size suffix also controls the memory read width.
 **Examples:**
 
 ```
-sub.32 r1, r2               ; r1 = r1 - r2 (register-register)
-sub.32 r1, #10              ; r1 = r1 - 10 (immediate)
+sub    r1, r2               ; r1 = r1 - r2 (register-register)
+sub    r1, #10              ; r1 = r1 - 10 (immediate)
 sub.8  r1, #1               ; r1 = (r1 - 1) & 0xFF (8-bit subtraction)
 sub.16 r1, #1               ; r1 = (r1 - 1) & 0xFFFF (16-bit subtraction)
-sub.32 sp, #16              ; sp = sp - 16 (allocate 16 bytes on stack)
-sub.32 r1, [r2]             ; r1 = r1 - mem.32[r2] (memory indirect)
-sub.32 r1, [r2][r3]         ; r1 = r1 - mem.32[r2 + r3] (indexed)
-sub.32 r1, [r2][r3+8]       ; r1 = r1 - mem.32[r2 + r3 + 8] (indexed+offset)
-sub.32 r1, [r6+=4]          ; r1 = r1 - mem.32[r6], then r6 += 4 (post-increment)
-sub.32 r1, 0x100            ; r1 = r1 - mem.32[0x100] (absolute)
+sub    sp, #16              ; sp = sp - 16 (allocate 16 bytes on stack)
+sub    r1, [r2]             ; r1 = r1 - mem.32[r2] (memory indirect)
+sub    r1, [r2][r3]         ; r1 = r1 - mem.32[r2 + r3] (indexed)
+sub    r1, [r2][r3+8]       ; r1 = r1 - mem.32[r2 + r3 + 8] (indexed+offset)
+sub    r1, [r6+=4]          ; r1 = r1 - mem.32[r6], then r6 += 4 (post-increment)
+sub    r1, 0x100            ; r1 = r1 - mem.32[0x100] (absolute)
 ```
 
 **Notes:**
 
 - There is no borrow flag.
 - `sub.8 r1, #1` with r1 = 0x00 produces r1 = 0xFF (wraps to 255).
-- `sub.32 sp, #N` / `add.32 sp, #N` is the standard pattern for allocating/deallocating stack space.
+- `sub sp, #N` / `add sp, #N` is the standard pattern for allocating/deallocating stack space.
 
 ---
 
@@ -1157,32 +1161,32 @@ For memory operands, the size suffix also controls the memory read width.
 **Examples:**
 
 ```
-xor.32 r1, #-1              ; r1 = r1 ^ 0xFFFFFFFF = ~r1 (bitwise NOT)
+xor    r1, #-1              ; r1 = r1 ^ 0xFFFFFFFF = ~r1 (bitwise NOT)
 xor.8  r1, #-1              ; r1 = (r1 ^ 0xFFFFFFFF) & 0xFF (8-bit NOT of lower byte)
-xor.32 r1, r2               ; r1 = r1 ^ r2 (register-register)
-xor.32 r1, [r2]             ; r1 = r1 ^ mem.32[r2] (memory indirect)
-xor.32 r1, [r2][r3]         ; r1 = r1 ^ mem.32[r2 + r3] (indexed)
-xor.32 r1, [r2][r3+8]       ; r1 = r1 ^ mem.32[r2 + r3 + 8] (indexed+offset)
-xor.32 r1, [r6+=4]          ; r1 = r1 ^ mem.32[r6], then r6 += 4 (post-increment)
-xor.32 r1, 0x100            ; r1 = r1 ^ mem.32[0x100] (absolute)
+xor    r1, r2               ; r1 = r1 ^ r2 (register-register)
+xor    r1, [r2]             ; r1 = r1 ^ mem.32[r2] (memory indirect)
+xor    r1, [r2][r3]         ; r1 = r1 ^ mem.32[r2 + r3] (indexed)
+xor    r1, [r2][r3+8]       ; r1 = r1 ^ mem.32[r2 + r3 + 8] (indexed+offset)
+xor    r1, [r6+=4]          ; r1 = r1 ^ mem.32[r6], then r6 += 4 (post-increment)
+xor    r1, 0x100            ; r1 = r1 ^ mem.32[0x100] (absolute)
 ```
 
 **Notes:**
 
-- `xor.32 r1, #-1` is the standard bitwise NOT, since `#-1` sign-extends to `0xFFFFFFFF`.
+- `xor r1, #-1` is the standard bitwise NOT, since `#-1` sign-extends to `0xFFFFFFFF`.
 - `xor.8 r1, #-1` inverts only the lower byte and clears the upper 24 bits.
 - XOR is its own inverse: applying it twice restores the original value.
 
 ## Stack Operations
 
-There are no dedicated PUSH/POP machine instructions — the architecture doesn't need them. `push rN` is a two-instruction pseudo (`sub.32 sp, #4` then `st.32 [sp], rN`) and `pop rN` is a single-instruction pseudo using AGU post-increment writeback (`ld.32 rN, [sp+=4]`). After a `push`, sp points at the pushed value; after a matching `pop`, sp is restored to its pre-push state.
+There are no dedicated PUSH/POP machine instructions — the architecture doesn't need them. `push rN` is a two-instruction pseudo (`sub sp, #4` then `st [sp], rN`) and `pop rN` is a single-instruction pseudo using AGU post-increment writeback (`ld rN, [sp+=4]`). After a `push`, sp points at the pushed value; after a matching `pop`, sp is restored to its pre-push state.
 
 A 68K-style function prologue and epilogue:
 
 ```asm
 my_func:
                 push    r6                  ; save callee-saved register
-                ld.32   r1, [sp+8]          ; load arg0 from caller's frame
+                ld      r1, [sp+8]          ; load arg0 from caller's frame
                 ; ... body ...
                 pop     r6                  ; restore r6
                 ret                         ; return to caller
@@ -1202,7 +1206,7 @@ The argument at `[sp+8]` is two slots above sp because the prologue pushed r6 (4
 ## Complete Example
 
 ```
-                ld.32   r6, #hello
+                ld      r6, #hello
 .loop:
                 ld.8    r1, [r6++]
                 beq.8   r1, #0, stop

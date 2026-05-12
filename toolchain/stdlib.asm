@@ -6,22 +6,22 @@
 ; Otherwise waits for UART idle and sends to 0xFFFF0000.
 ; Clobbers r4 (status read / pointer). Preserves everything else.
 __putc:
-                ld.32   r4, __out_buf
-                bne.32  r4, #0, .tobuf
+                ld      r4, __out_buf
+                bne     r4, #0, .tobuf
 .wait:          ld.8    r4, 0xFFFF0004      ; read UART status (busy flag)
                 bne.8   r4, #0, .wait       ; loop while busy
                 st.8    0xFFFF0000, r1      ; send byte
                 ret
 .tobuf:         st.8    [r4], r1            ; store to buffer
-                add.32  r4, #1
-                st.32   __out_buf, r4       ; advance pointer
+                add     r4, #1
+                st      __out_buf, r4       ; advance pointer
                 ret
 
 ; ---- putchar(char c) ----
 ; Argument: character on stack at [sp+8]
 putchar:
                 push    r6                          ; save r6
-                ld.32   r1, [sp+8]      ; load arg from stack
+                ld      r1, [sp+8]      ; load arg from stack
                 call    __putc
                 pop     r6                          ; restore r6
                 ret
@@ -32,14 +32,14 @@ putchar:
 puts:
                 push    r6                          ; save r6
                 push    r5                          ; save r5
-                ld.32   r5, [sp+12]     ; load string pointer (8 + 1 retaddr)
+                ld      r5, [sp+12]     ; load string pointer (8 + 1 retaddr)
 .loop:
                 ld.8    r1, [r5++]
                 beq.8   r1, #0, .newline
                 call    __putc
                 jmp     .loop
 .newline:
-                ld.32   r1, #10             ; '\n'
+                ld      r1, #10             ; '\n'
                 call    __putc
                 pop     r5                          ; restore r5
                 pop     r6                          ; restore r6
@@ -50,9 +50,9 @@ puts:
 ; At 12MHz, ~3000 loop iterations per ms.
 sleep:
                 push    r6                          ; save r6
-                ld.32   r3, [sp+8]      ; load count
-.loop:          beq.32  r3, #0, .done
-                sub.32  r3, #1
+                ld      r3, [sp+8]      ; load count
+.loop:          beq     r3, #0, .done
+                sub     r3, #1
                 jmp     .loop
 .done:
                 pop     r6                          ; restore r6
@@ -63,7 +63,7 @@ sleep:
 ; bit 0 = green, bit 1 = red, bit 2 = blue
 setleds:
                 push    r6                          ; save r6
-                ld.32   r1, [sp+8]
+                ld      r1, [sp+8]
                 st.8    0xFFFF0008, r1
                 pop     r6                          ; restore r6
                 ret
@@ -79,11 +79,11 @@ sprintf:
                 push    r5
                 push    r4
                 push    r3
-                ld.32   r6, __out_buf       ; save previous __out_buf in r6
-                ld.32   r1, [sp+20]         ; buf
-                st.32   __out_buf, r1        ; redirect output to buffer
-                ld.32   r5, [sp+24]         ; fmt
-                ld.32   r3, #28             ; first vararg at [sp+28]
+                ld      r6, __out_buf       ; save previous __out_buf in r6
+                ld      r1, [sp+20]         ; buf
+                st      __out_buf, r1        ; redirect output to buffer
+                ld      r5, [sp+24]         ; fmt
+                ld      r3, #28             ; first vararg at [sp+28]
                 jmp     __printf_scan
 
 ; ---- printf(char *fmt, ...) ----
@@ -97,16 +97,16 @@ printf:
                 push    r5
                 push    r4
                 push    r3
-                ld.32   r6, __out_buf       ; save previous __out_buf in r6 (normally 0)
-                ld.32   r5, [sp+20]         ; r5 = format string pointer
-                ld.32   r3, #24             ; r3 = offset to first vararg
+                ld      r6, __out_buf       ; save previous __out_buf in r6 (normally 0)
+                ld      r5, [sp+20]         ; r5 = format string pointer
+                ld      r3, #24             ; r3 = offset to first vararg
 
 ; ---- Shared format engine (entered from printf or sprintf) ----
 ; r5 = format string pointer, r3 = sp offset to next vararg, r6 = saved __out_buf.
 __printf_scan:
                 ld.8    r1, [r5++]          ; next format char
                 beq.8   r1, #0, .ret        ; null terminator -> done
-                ld.32   r4, #37             ; '%' = 37
+                ld      r4, #37             ; '%' = 37
                 beq.8   r1, r4, .spec       ; format specifier
                 ; Regular character: send to UART
                 call    __putc
@@ -116,15 +116,15 @@ __printf_scan:
 .spec:
                 ld.8    r1, [r5++]          ; specifier char
                 beq.8   r1, #0, .ret        ; premature end
-                ld.32   r4, #100            ; 'd'
+                ld      r4, #100            ; 'd'
                 beq.8   r1, r4, .dec
-                ld.32   r4, #115            ; 's'
+                ld      r4, #115            ; 's'
                 beq.8   r1, r4, .str
-                ld.32   r4, #99             ; 'c'
+                ld      r4, #99             ; 'c'
                 beq.8   r1, r4, .chr
-                ld.32   r4, #120            ; 'x'
+                ld      r4, #120            ; 'x'
                 beq.8   r1, r4, .hex
-                ld.32   r4, #37             ; '%'
+                ld      r4, #37             ; '%'
                 beq.8   r1, r4, .pct
                 ; Unknown specifier: print as-is
                 call    __putc
@@ -132,21 +132,21 @@ __printf_scan:
 
 ; ---- %c: print character ----
 .chr:
-                ld.32   r1, [sp][r3+0]      ; load char arg
-                add.32  r3, #4              ; advance to next arg
+                ld      r1, [sp][r3+0]      ; load char arg
+                add     r3, #4              ; advance to next arg
                 call    __putc
                 jmp     __printf_scan
 
 ; ---- %%: print literal '%' ----
 .pct:
-                ld.32   r1, #37
+                ld      r1, #37
                 call    __putc
                 jmp     __printf_scan
 
 ; ---- %s: print string ----
 .str:
-                ld.32   r2, [sp][r3+0]      ; load string pointer arg
-                add.32  r3, #4              ; advance to next arg
+                ld      r2, [sp][r3+0]      ; load string pointer arg
+                add     r3, #4              ; advance to next arg
                 push    r5                          ; save fmt pointer
 .strl:
                 ld.8    r1, [r2++]
@@ -159,44 +159,44 @@ __printf_scan:
 
 ; ---- %d: print signed decimal ----
 .dec:
-                ld.32   r2, [sp][r3+0]      ; load int arg
-                add.32  r3, #4              ; advance to next arg
+                ld      r2, [sp][r3+0]      ; load int arg
+                add     r3, #4              ; advance to next arg
                 push    r5                          ; save fmt pointer
                 push    r3                          ; save arg offset
-                ld.32   r3, r2                      ; r3 = value (register move!)
+                ld      r3, r2                      ; r3 = value (register move!)
                 ; Handle negative
-                bge.32  r3, #0, .dpos
-                ld.32   r1, #45             ; '-'
+                bge     r3, #0, .dpos
+                ld      r1, #45             ; '-'
                 call    __putc
-                xor.32  r3, #-1             ; negate: ~r3 + 1
-                add.32  r3, #1
+                xor     r3, #-1             ; negate: ~r3 + 1
+                add     r3, #1
 .dpos:
-                ld.32   r5, #__printf_pow10 ; power-of-10 table
-                ld.32   r2, #0              ; started flag
+                ld      r5, #__printf_pow10 ; power-of-10 table
+                ld      r2, #0              ; started flag
 .dpow:
-                ld.32   r4, [r5]            ; r4 = current power
-                beq.32  r4, #0, .dend       ; sentinel -> done
-                ld.32   r1, #0              ; digit = 0
+                ld      r4, [r5]            ; r4 = current power
+                beq     r4, #0, .dend       ; sentinel -> done
+                ld      r1, #0              ; digit = 0
 .dsub:
-                blt.32  r3, r4, .dsd        ; value < power -> done
-                sub.32  r3, [r5]            ; value -= power (from table)
-                add.32  r1, #1              ; digit++
+                blt     r3, r4, .dsd        ; value < power -> done
+                sub     r3, [r5]            ; value -= power (from table)
+                add     r1, #1              ; digit++
                 jmp     .dsub
 .dsd:
-                bne.32  r1, #0, .dpr        ; nonzero digit -> print
-                bne.32  r2, #0, .dpr        ; already started -> print zero
+                bne     r1, #0, .dpr        ; nonzero digit -> print
+                bne     r2, #0, .dpr        ; already started -> print zero
                 jmp     .dnx                ; skip leading zero
 .dpr:
-                ld.32   r2, #1              ; started = true
-                add.32  r1, #48             ; '0' = 48
+                ld      r2, #1              ; started = true
+                add     r1, #48             ; '0' = 48
                 call    __putc
 .dnx:
-                add.32  r5, #4              ; next power in table
+                add     r5, #4              ; next power in table
                 jmp     .dpow
 .dend:
                 ; If nothing printed (value was 0), print '0'
-                bne.32  r2, #0, .ddn
-                ld.32   r1, #48
+                bne     r2, #0, .ddn
+                ld      r1, #48
                 call    __putc
 .ddn:
                 pop     r3                          ; restore arg offset
@@ -205,37 +205,37 @@ __printf_scan:
 
 ; ---- %x: print hex ----
 .hex:
-                ld.32   r2, [sp][r3+0]      ; load int arg
-                add.32  r3, #4              ; advance to next arg
+                ld      r2, [sp][r3+0]      ; load int arg
+                add     r3, #4              ; advance to next arg
                 push    r5                          ; save fmt pointer
                 push    r3                          ; save arg offset
-                ld.32   r3, r2                      ; r3 = value (register move!)
-                ld.32   r2, #0              ; started flag
-                ld.32   r5, #8              ; nibble count
+                ld      r3, r2                      ; r3 = value (register move!)
+                ld      r2, #0              ; started flag
+                ld      r5, #8              ; nibble count
 .xnib:
-                beq.32  r5, #0, .xdn
+                beq     r5, #0, .xdn
                 ; Extract top nibble
-                ld.32   r1, r3                      ; r1 = value (register move!)
-                shr.32  r1, #28
-                and.32  r1, #15
+                ld      r1, r3                      ; r1 = value (register move!)
+                shr     r1, #28
+                and     r1, #15
                 ; Leading zero check
-                bne.32  r1, #0, .xpr
-                bne.32  r2, #0, .xpr
-                beq.32  r5, #1, .xpr        ; last nibble: must print
+                bne     r1, #0, .xpr
+                bne     r2, #0, .xpr
+                beq     r5, #1, .xpr        ; last nibble: must print
                 jmp     .xsh
 .xpr:
-                ld.32   r2, #1              ; started
-                ld.32   r4, #10
-                blt.32  r1, r4, .xdg
-                add.32  r1, #87             ; 'a' - 10 = 87
+                ld      r2, #1              ; started
+                ld      r4, #10
+                blt     r1, r4, .xdg
+                add     r1, #87             ; 'a' - 10 = 87
                 jmp     .xsn
 .xdg:
-                add.32  r1, #48             ; '0'
+                add     r1, #48             ; '0'
 .xsn:
                 call    __putc
 .xsh:
-                shl.32  r3, #4              ; shift value left for next nibble
-                sub.32  r5, #1
+                shl     r3, #4              ; shift value left for next nibble
+                sub     r5, #1
                 jmp     .xnib
 .xdn:
                 pop     r3                          ; restore arg offset
@@ -245,11 +245,11 @@ __printf_scan:
 ; ---- Return ----
 .ret:
                 ; If writing to a buffer (sprintf), null-terminate.
-                ld.32   r1, __out_buf
-                beq.32  r1, #0, .ret2
+                ld      r1, __out_buf
+                beq     r1, #0, .ret2
                 clr     r2
                 st.8    [r1], r2            ; write '\0'
-.ret2:          st.32   __out_buf, r6       ; restore previous __out_buf (0 for printf)
+.ret2:          st      __out_buf, r6       ; restore previous __out_buf (0 for printf)
                 pop     r3
                 pop     r4
                 pop     r5
@@ -259,71 +259,71 @@ __printf_scan:
 ; ---- gpio_set_dir(int mask) ----
 ; Sets the GPIO direction register at 0xFFFF0014. Bit 1 = output, 0 = input.
 gpio_set_dir:
-                ld.32   r1, [sp+4]
-                st.32   0xFFFF0014, r1
+                ld      r1, [sp+4]
+                st      0xFFFF0014, r1
                 ret
 
 ; ---- gpio_write(int value) ----
 ; Writes the GPIO output data register at 0xFFFF0010. Only pins configured
 ; as outputs (via gpio_set_dir) actually drive the pad.
 gpio_write:
-                ld.32   r1, [sp+4]
-                st.32   0xFFFF0010, r1
+                ld      r1, [sp+4]
+                st      0xFFFF0010, r1
                 ret
 
 ; ---- gpio_read() ----
 ; Returns the live GPIO pin state in r1 (8 bits, zero-extended).
 gpio_read:
-                ld.32   r1, 0xFFFF0010
+                ld      r1, 0xFFFF0010
                 ret
 
 ; ---- __i2c_wait: spin until the I2C master finishes the current op ----
 ; Status reg layout at 0xFFFF001C: [0]=busy, [1]=ack_recv. Clobbers r4.
 __i2c_wait:
-.wait:          ld.32   r4, 0xFFFF001C
-                and.32  r4, #1
-                bne.32  r4, #0, .wait
+.wait:          ld      r4, 0xFFFF001C
+                and     r4, #1
+                bne     r4, #0, .wait
                 ret
 
 ; ---- i2c_start() — generate START condition ----
 i2c_start:
-                ld.32   r1, #1              ; cmd[0] = start
-                st.32   0xFFFF001C, r1
+                ld      r1, #1              ; cmd[0] = start
+                st      0xFFFF001C, r1
                 call    __i2c_wait
                 ret
 
 ; ---- i2c_stop() — generate STOP condition ----
 i2c_stop:
-                ld.32   r1, #2              ; cmd[1] = stop
-                st.32   0xFFFF001C, r1
+                ld      r1, #2              ; cmd[1] = stop
+                st      0xFFFF001C, r1
                 call    __i2c_wait
                 ret
 
 ; ---- i2c_write(byte) — shift out one byte; returns 0 on ACK, 1 on NACK ----
 i2c_write:
-                ld.32   r1, [sp+4]
-                st.32   0xFFFF0018, r1      ; load tx data
-                ld.32   r1, #4              ; cmd[2] = write
-                st.32   0xFFFF001C, r1
+                ld      r1, [sp+4]
+                st      0xFFFF0018, r1      ; load tx data
+                ld      r1, #4              ; cmd[2] = write
+                st      0xFFFF001C, r1
                 call    __i2c_wait
-                ld.32   r1, 0xFFFF001C      ; status
-                and.32  r1, #2              ; isolate ack_recv
+                ld      r1, 0xFFFF001C      ; status
+                and     r1, #2              ; isolate ack_recv
                 ret
 
 ; ---- i2c_read(ack) — shift in one byte; ack=0 for ACK, 1 for NACK ----
 i2c_read:
-                ld.32   r1, [sp+4]      ; ack arg
-                and.32  r1, #1
-                shl.32  r1, #4              ; -> bit 4 (ack_send)
-                or.32   r1, #8              ; cmd[3] = read
-                st.32   0xFFFF001C, r1
+                ld      r1, [sp+4]      ; ack arg
+                and     r1, #1
+                shl     r1, #4              ; -> bit 4 (ack_send)
+                or      r1, #8              ; cmd[3] = read
+                st      0xFFFF001C, r1
                 call    __i2c_wait
-                ld.32   r1, 0xFFFF0018      ; rx data
+                ld      r1, 0xFFFF0018      ; rx data
                 ret
 
 ; ---- adc_read() — return latest 12-bit sigma-delta ADC sample ----
 adc_read:
-                ld.32   r1, 0xFFFF0020
+                ld      r1, 0xFFFF0020
                 ret
 
 ; ---- adc_readf() — return ADC sample as float in range -1.0 .. +1.0 ----
@@ -331,17 +331,17 @@ adc_read:
 ; Computed as: (raw - 2048) / 2048.0
 adc_readf:
                 push    r6
-                ld.32   r1, 0xFFFF0020      ; raw 0..4095
-                sub.32  r1, #2048           ; centered: -2048..+2047
+                ld      r1, 0xFFFF0020      ; raw 0..4095
+                sub     r1, #2048           ; centered: -2048..+2047
                 push    r1
                 call    itof                ; float(centered)
-                add.32  sp, #4
-                ld.32   r6, r1              ; save numerator
+                add     sp, #4
+                ld      r6, r1              ; save numerator
                 ldi     r1, #1157627904     ; 2048.0 as IEEE 754 (0x45000000)
                 push    r1                  ; push b (denominator) first
                 push    r6                  ; push a (numerator) second
                 call    fdiv                ; fdiv(a=[sp+4], b=[sp+8])
-                add.32  sp, #8
+                add     sp, #8
                 pop     r6
                 ret
 
@@ -349,23 +349,23 @@ adc_readf:
 ; Shift-add, up to 32 iterations (bails out when multiplier is zero).
 ; Args: a at [sp+4], b at [sp+8]. Result in r1.
 __mul:
-                ld.32   r1, [sp+4]      ; r1 = a (shifts left)
-                ld.32   r2, [sp+8]      ; r2 = b (shifts right)
-                ld.32   r3, #0              ; accumulator
+                ld      r1, [sp+4]      ; r1 = a (shifts left)
+                ld      r2, [sp+8]      ; r2 = b (shifts right)
+                ld      r3, #0              ; accumulator
 .loop:
-                beq.32  r2, #0, .done
-                ld.32   r4, r2                      ; test LSB of b
-                and.32  r4, #1
-                beq.32  r4, #0, .skip
+                beq     r2, #0, .done
+                ld      r4, r2                      ; test LSB of b
+                and     r4, #1
+                beq     r4, #0, .skip
                 push    r1                          ; acc += a (reg-reg via stack)
-                add.32  r3, [sp]
-                add.32  sp, #4
+                add     r3, [sp]
+                add     sp, #4
 .skip:
-                shl.32  r1, #1
-                shr.32  r2, #1
+                shl     r1, #1
+                shr     r2, #1
                 jmp     .loop
 .done:
-                ld.32   r1, r3
+                ld      r1, r3
                 ret
 
 ; ---- __div(a, b) / __mod(a, b): unsigned divide and modulo ----
@@ -374,37 +374,37 @@ __mul:
 ; Clobbers r2-r5; no caller-saves needed (caller pushed args).
 __div:
                 call    __divmod
-                ld.32   r1, r3                      ; quotient
+                ld      r1, r3                      ; quotient
                 ret
 __mod:
                 call    __divmod
-                ld.32   r1, r4                      ; remainder
+                ld      r1, r4                      ; remainder
                 ret
 
 ; Internal: returns quotient in r3, remainder in r4.
 ; After call here, retaddr is at [sp+0], caller's retaddr at [sp+4],
 ; a at [sp+8], b at [sp+12].
 __divmod:
-                ld.32   r1, [sp+8]      ; r1 = a (dividend, shifts out)
-                ld.32   r2, [sp+12]     ; r2 = b (divisor)
-                ld.32   r3, #0              ; quotient
-                ld.32   r4, #0              ; remainder
-                ld.32   r5, #32             ; bit counter
+                ld      r1, [sp+8]      ; r1 = a (dividend, shifts out)
+                ld      r2, [sp+12]     ; r2 = b (divisor)
+                ld      r3, #0              ; quotient
+                ld      r4, #0              ; remainder
+                ld      r5, #32             ; bit counter
 .loop:
-                beq.32  r5, #0, .done
-                shl.32  r4, #1              ; remainder <<= 1
-                bge.32  r1, #0, .noset      ; top bit of r1 clear?
-                or.32   r4, #1              ; else set LSB of remainder
+                beq     r5, #0, .done
+                shl     r4, #1              ; remainder <<= 1
+                bge     r1, #0, .noset      ; top bit of r1 clear?
+                or      r4, #1              ; else set LSB of remainder
 .noset:
-                shl.32  r1, #1              ; dividend <<= 1
-                shl.32  r3, #1              ; quotient <<= 1
-                blt.32  r4, r2, .nosub      ; remainder < divisor?
+                shl     r1, #1              ; dividend <<= 1
+                shl     r3, #1              ; quotient <<= 1
+                blt     r4, r2, .nosub      ; remainder < divisor?
                 push    r2                          ; reg-reg sub via stack
-                sub.32  r4, [sp]              ; r4 -= r2
-                add.32  sp, #4
-                or.32   r3, #1              ; quotient |= 1
+                sub     r4, [sp]              ; r4 -= r2
+                add     sp, #4
+                or      r3, #1              ; quotient |= 1
 .nosub:
-                sub.32  r5, #1
+                sub     r5, #1
                 jmp     .loop
 .done:
                 ret
@@ -417,25 +417,25 @@ __divmod:
 ; Args: a at [sp+4], b at [sp+8]. Result (signed) in r1.
 __smul:
                 push    r6
-                ld.32   r1, [sp+8]
-                ld.32   r2, [sp+12]
+                ld      r1, [sp+8]
+                ld      r2, [sp+12]
                 clr     r6
-                bge.32  r1, #0, .apos
-                xor.32  r1, #-1
-                add.32  r1, #1
-                add.32  r6, #1
-.apos:          bge.32  r2, #0, .bpos
-                xor.32  r2, #-1
-                add.32  r2, #1
-                add.32  r6, #1
+                bge     r1, #0, .apos
+                xor     r1, #-1
+                add     r1, #1
+                add     r6, #1
+.apos:          bge     r2, #0, .bpos
+                xor     r2, #-1
+                add     r2, #1
+                add     r6, #1
 .bpos:          push    r2
                 push    r1
                 call    __mul
-                add.32  sp, #8
-                and.32  r6, #1
-                beq.32  r6, #0, .done
-                xor.32  r1, #-1
-                add.32  r1, #1
+                add     sp, #8
+                and     r6, #1
+                beq     r6, #0, .done
+                xor     r1, #-1
+                add     r1, #1
 .done:          pop     r6
                 ret
 
@@ -443,25 +443,25 @@ __smul:
 ; Args: a at [sp+4], b at [sp+8]. Result in r1.
 __sdiv:
                 push    r6
-                ld.32   r1, [sp+8]
-                ld.32   r2, [sp+12]
+                ld      r1, [sp+8]
+                ld      r2, [sp+12]
                 clr     r6
-                bge.32  r1, #0, .apos
-                xor.32  r1, #-1
-                add.32  r1, #1
-                add.32  r6, #1
-.apos:          bge.32  r2, #0, .bpos
-                xor.32  r2, #-1
-                add.32  r2, #1
-                add.32  r6, #1
+                bge     r1, #0, .apos
+                xor     r1, #-1
+                add     r1, #1
+                add     r6, #1
+.apos:          bge     r2, #0, .bpos
+                xor     r2, #-1
+                add     r2, #1
+                add     r6, #1
 .bpos:          push    r2
                 push    r1
                 call    __div
-                add.32  sp, #8
-                and.32  r6, #1
-                beq.32  r6, #0, .done
-                xor.32  r1, #-1
-                add.32  r1, #1
+                add     sp, #8
+                and     r6, #1
+                beq     r6, #0, .done
+                xor     r1, #-1
+                add     r1, #1
 .done:          pop     r6
                 ret
 
@@ -469,23 +469,23 @@ __sdiv:
 ; Args: a at [sp+4], b at [sp+8]. Result in r1.
 __smod:
                 push    r6
-                ld.32   r1, [sp+8]
-                ld.32   r2, [sp+12]
+                ld      r1, [sp+8]
+                ld      r2, [sp+12]
                 clr     r6
-                bge.32  r1, #0, .apos
-                xor.32  r1, #-1
-                add.32  r1, #1
-                add.32  r6, #1
-.apos:          bge.32  r2, #0, .bpos
-                xor.32  r2, #-1
-                add.32  r2, #1
+                bge     r1, #0, .apos
+                xor     r1, #-1
+                add     r1, #1
+                add     r6, #1
+.apos:          bge     r2, #0, .bpos
+                xor     r2, #-1
+                add     r2, #1
 .bpos:          push    r2
                 push    r1
                 call    __mod
-                add.32  sp, #8
-                beq.32  r6, #0, .done
-                xor.32  r1, #-1
-                add.32  r1, #1
+                add     sp, #8
+                beq     r6, #0, .done
+                xor     r1, #-1
+                add     r1, #1
 .done:          pop     r6
                 ret
 
@@ -494,85 +494,85 @@ __smod:
 ;   [sp+4] = n, [sp+8] = x.  Result in r1.
 ; Now a thin wrapper around the native ASR opcode.
 __sar:
-                ld.32   r1, [sp+8]          ; x
-                ld.32   r2, [sp+4]          ; n
+                ld      r1, [sp+8]          ; x
+                ld      r2, [sp+4]          ; n
                 push    r2
-                asr.32  r1, [sp]
-                add.32  sp, #4
+                asr     r1, [sp]
+                add     sp, #4
                 ret
 
 ; ---- abs(x): absolute value ----
 abs:
-                ld.32   r1, [sp+4]
-                bge.32  r1, #0, .done
-                xor.32  r1, #-1
-                add.32  r1, #1
+                ld      r1, [sp+4]
+                bge     r1, #0, .done
+                xor     r1, #-1
+                add     r1, #1
 .done:          ret
 
 ; ---- min(a, b) / max(a, b): signed min/max ----
 min:
-                ld.32   r1, [sp+4]
-                ld.32   r2, [sp+8]
-                ble.32  r1, r2, .done
-                ld.32   r1, r2
+                ld      r1, [sp+4]
+                ld      r2, [sp+8]
+                ble     r1, r2, .done
+                ld      r1, r2
 .done:          ret
 max:
-                ld.32   r1, [sp+4]
-                ld.32   r2, [sp+8]
-                bge.32  r1, r2, .done
-                ld.32   r1, r2
+                ld      r1, [sp+4]
+                ld      r2, [sp+8]
+                bge     r1, r2, .done
+                ld      r1, r2
 .done:          ret
 
 ; ---- clamp(x, lo, hi): signed clamp ----
 clamp:
-                ld.32   r1, [sp+4]
-                ld.32   r2, [sp+8]
-                ld.32   r3, [sp+12]
-                bge.32  r1, r2, .above
-                ld.32   r1, r2
+                ld      r1, [sp+4]
+                ld      r2, [sp+8]
+                ld      r3, [sp+12]
+                bge     r1, r2, .above
+                ld      r1, r2
                 ret
-.above:         ble.32  r1, r3, .done
-                ld.32   r1, r3
+.above:         ble     r1, r3, .done
+                ld      r1, r3
 .done:          ret
 
 ; ---- clz(x): count leading zeros (0..32) ----
 clz:
-                ld.32   r2, [sp+4]
+                ld      r2, [sp+4]
                 clr     r1
-                beq.32  r2, #0, .all
-.loop:          blt.32  r2, #0, .done
-                shl.32  r2, #1
-                add.32  r1, #1
+                beq     r2, #0, .all
+.loop:          blt     r2, #0, .done
+                shl     r2, #1
+                add     r1, #1
                 jmp     .loop
-.all:           ld.32   r1, #32
+.all:           ld      r1, #32
 .done:          ret
 
 ; ---- isqrt(x): integer square root (unsigned) ----
 ; Restoring bit-by-bit; no multiply needed.
 isqrt:
                 push    r5
-                ld.32   r3, [sp+8]
+                ld      r3, [sp+8]
                 clr     r1
                 clr     r2
-                ld.32   r5, #16
-.loop:          beq.32  r5, #0, .done
-                shl.32  r2, #2
-                ld.32   r4, r3
-                shr.32  r4, #30
+                ld      r5, #16
+.loop:          beq     r5, #0, .done
+                shl     r2, #2
+                ld      r4, r3
+                shr     r4, #30
                 push    r4
-                or.32   r2, [sp]
-                add.32  sp, #4
-                shl.32  r3, #2
-                shl.32  r1, #1
-                ld.32   r4, r1
-                shl.32  r4, #1
-                or.32   r4, #1
-                blt.32  r2, r4, .nosub
+                or      r2, [sp]
+                add     sp, #4
+                shl     r3, #2
+                shl     r1, #1
+                ld      r4, r1
+                shl     r4, #1
+                or      r4, #1
+                blt     r2, r4, .nosub
                 push    r4
-                sub.32  r2, [sp]
-                add.32  sp, #4
-                or.32   r1, #1
-.nosub:         sub.32  r5, #1
+                sub     r2, [sp]
+                add     sp, #4
+                or      r1, #1
+.nosub:         sub     r5, #1
                 jmp     .loop
 .done:          pop     r5
                 ret
@@ -600,21 +600,21 @@ _f_rad2deg:  db 0xE1, 0x2E, 0x65, 0x42  ; 57.2957795 = 180/pi
 ; ---- fabs(x): float absolute value ----
 ; Clears the sign bit.
 fabs:
-                ld.32   r1, [sp+4]
+                ld      r1, [sp+4]
                 ldi     r2, #0x7FFFFFFF
                 push    r2
-                and.32  r1, [sp]
-                add.32  sp, #4
+                and     r1, [sp]
+                add     sp, #4
                 ret
 
 ; ---- fneg(x): float negate ----
 ; Flips the sign bit.
 fneg:
-                ld.32   r1, [sp+4]
+                ld      r1, [sp+4]
                 ldi     r2, #0x80000000
                 push    r2
-                xor.32  r1, [sp]
-                add.32  sp, #4
+                xor     r1, [sp]
+                add     sp, #4
                 ret
 
 ; ---- fsqrt(x): float square root ----
@@ -623,36 +623,36 @@ fneg:
 fsqrt:
                 push    r6
                 push    r5
-                ld.32   r6, [sp+12]         ; x
+                ld      r6, [sp+12]         ; x
                 ; If x <= 0, return 0
-                ld.32   r1, _f_zero
+                ld      r1, _f_zero
                 push    r1
                 push    r6
                 call    fcmp
-                add.32  sp, #8
-                ble.32  r1, #0, .retzero
+                add     sp, #8
+                ble     r1, #0, .retzero
                 ; Seed: convert to int, isqrt, convert back.
                 ; The seed must be parked in a callee-saved register (r5)
                 ; BEFORE we call fcmp — fcmp returns its result in r1 and
                 ; would otherwise clobber the seed.
                 push    r6
                 call    ftoi
-                add.32  sp, #4
+                add     sp, #4
                 push    r1
                 call    isqrt
-                add.32  sp, #4
+                add     sp, #4
                 push    r1
                 call    itof
-                add.32  sp, #4
-                ld.32   r5, r1              ; r5 = seed (safe across fcmp)
+                add     sp, #4
+                ld      r5, r1              ; r5 = seed (safe across fcmp)
                 ; If seed is 0 (very small x), use x itself as seed.
-                ld.32   r2, _f_zero
+                ld      r2, _f_zero
                 push    r2
                 push    r5
                 call    fcmp
-                add.32  sp, #8
-                bne.32  r1, #0, .has_seed
-                ld.32   r5, r6              ; use x as seed
+                add     sp, #8
+                bne     r1, #0, .has_seed
+                ld      r5, r6              ; use x as seed
 .has_seed:      ; r5 = y (current estimate), r6 = x (unchanged since entry).
                 ; 2 Newton iterations: y = (y + x/y) / 2.
                 ; Unrolled because fdiv/fadd clobber r4 — we can't use it
@@ -661,37 +661,37 @@ fsqrt:
                 push    r5                  ; b = y
                 push    r6                  ; a = x
                 call    fdiv                ; x / y
-                add.32  sp, #8
+                add     sp, #8
                 push    r1                  ; b = x/y
                 push    r5                  ; a = y
                 call    fadd                ; y + x/y
-                add.32  sp, #8
-                ld.32   r2, _f_two
+                add     sp, #8
+                ld      r2, _f_two
                 push    r2                  ; b = 2.0
                 push    r1                  ; a = (y + x/y)
                 call    fdiv                ; / 2
-                add.32  sp, #8
-                ld.32   r5, r1              ; y = new estimate
+                add     sp, #8
+                ld      r5, r1              ; y = new estimate
                 ; ---- Iteration 2 ----
                 push    r5                  ; b = y
                 push    r6                  ; a = x
                 call    fdiv                ; x / y
-                add.32  sp, #8
+                add     sp, #8
                 push    r1                  ; b = x/y
                 push    r5                  ; a = y
                 call    fadd                ; y + x/y
-                add.32  sp, #8
-                ld.32   r2, _f_two
+                add     sp, #8
+                ld      r2, _f_two
                 push    r2                  ; b = 2.0
                 push    r1                  ; a = (y + x/y)
                 call    fdiv                ; / 2
-                add.32  sp, #8
-                ld.32   r5, r1              ; y = final estimate
-                ld.32   r1, r5
+                add     sp, #8
+                ld      r5, r1              ; y = final estimate
+                ld      r1, r5
                 pop     r5
                 pop     r6
                 ret
-.retzero:       ld.32   r1, _f_zero
+.retzero:       ld      r1, _f_zero
                 pop     r5
                 pop     r6
                 ret
@@ -704,107 +704,107 @@ fsqrt:
 fsin:
                 push    r6
                 push    r5
-                ld.32   r6, [sp+12]         ; x
+                ld      r6, [sp+12]         ; x
                 ; Reduce to [0, 2*pi] by computing x mod (2*pi)
                 ; x = x - floor(x / (2*pi)) * (2*pi)
-                ld.32   r1, _f_two_pi
+                ld      r1, _f_two_pi
                 push    r1                  ; b = 2*pi
                 push    r6                  ; a = x
                 call    fdiv
-                add.32  sp, #8
+                add     sp, #8
                 push    r1
                 call    ftoi                ; floor
-                add.32  sp, #4
+                add     sp, #4
                 push    r1
                 call    itof
-                add.32  sp, #4
-                ld.32   r2, _f_two_pi
+                add     sp, #4
+                ld      r2, _f_two_pi
                 push    r2
                 push    r1
                 call    fmul                ; floor * 2*pi
-                add.32  sp, #8
+                add     sp, #8
                 push    r1
                 push    r6
                 call    fsub                ; x - floor * 2*pi
-                add.32  sp, #8
-                ld.32   r6, r1              ; r6 = x in [0, 2*pi) approx
+                add     sp, #8
+                ld      r6, r1              ; r6 = x in [0, 2*pi) approx
                 ; If x > pi, use sin(x) = -sin(x - pi)
                 clr     r5                  ; r5 = negate flag
-                ld.32   r1, _f_pi
+                ld      r1, _f_pi
                 push    r1
                 push    r6
                 call    fcmp
-                add.32  sp, #8
-                ble.32  r1, #0, .in_range
+                add     sp, #8
+                ble     r1, #0, .in_range
                 ; x > pi: x = x - pi, negate result
-                ld.32   r1, _f_pi
+                ld      r1, _f_pi
                 push    r1
                 push    r6
                 call    fsub
-                add.32  sp, #8
-                ld.32   r6, r1
-                ld.32   r5, #1              ; negate
+                add     sp, #8
+                ld      r6, r1
+                ld      r5, #1              ; negate
 .in_range:      ; Now x in [0, pi]. Compute Bhaskara:
                 ; num = 16 * x * (pi - x)
                 ; den = 5*pi^2 - 4*x*(pi - x)
                 ; sin ≈ num / den
                 ; pi - x
                 push    r6
-                ld.32   r1, _f_pi
+                ld      r1, _f_pi
                 push    r1
                 call    fsub                ; pi - x
-                add.32  sp, #8
-                ld.32   r4, r1              ; r4 = pi - x (saved in r4, will be clobbered by fmul)
+                add     sp, #8
+                ld      r4, r1              ; r4 = pi - x (saved in r4, will be clobbered by fmul)
                 ; x * (pi - x)
-                st.32   _gm_tmp1, r4        ; save pi-x
+                st      _gm_tmp1, r4        ; save pi-x
                 push    r4
                 push    r6
                 call    fmul                ; x * (pi - x)
-                add.32  sp, #8
-                st.32   _gm_tmp2, r1        ; save x*(pi-x)
+                add     sp, #8
+                st      _gm_tmp2, r1        ; save x*(pi-x)
                 ; 16 * x * (pi-x)
                 ldi     r2, #1098907648     ; 16.0 = 0x41800000
                 push    r2
                 push    r1
                 call    fmul
-                add.32  sp, #8
-                st.32   _gm_tmp3, r1        ; num = 16*x*(pi-x)
+                add     sp, #8
+                st      _gm_tmp3, r1        ; num = 16*x*(pi-x)
                 ; 5 * pi^2
-                ld.32   r1, _f_pi
+                ld      r1, _f_pi
                 push    r1
                 push    r1
                 call    fmul                ; pi^2
-                add.32  sp, #8
+                add     sp, #8
                 ldi     r2, #1084227584     ; 5.0 = 0x40A00000
                 push    r2
                 push    r1
                 call    fmul                ; 5*pi^2
-                add.32  sp, #8
-                st.32   _gm_tmp1, r1        ; save 5*pi^2
+                add     sp, #8
+                st      _gm_tmp1, r1        ; save 5*pi^2
                 ; 4 * x * (pi-x)
-                ld.32   r1, _gm_tmp2        ; x*(pi-x)
-                ld.32   r2, _f_four
+                ld      r1, _gm_tmp2        ; x*(pi-x)
+                ld      r2, _f_four
                 push    r2
                 push    r1
                 call    fmul
-                add.32  sp, #8
+                add     sp, #8
                 ; den = 5*pi^2 - 4*x*(pi-x)
                 push    r1
-                ld.32   r1, _gm_tmp1
+                ld      r1, _gm_tmp1
                 push    r1
                 call    fsub
-                add.32  sp, #8
+                add     sp, #8
                 ; num / den
                 push    r1                  ; den
-                ld.32   r1, _gm_tmp3
+                ld      r1, _gm_tmp3
                 push    r1                  ; num
                 call    fdiv
-                add.32  sp, #8
+                add     sp, #8
                 ; Apply negate if needed
-                beq.32  r5, #0, .sin_done
+                beq     r5, #0, .sin_done
                 push    r1
                 call    fneg
-                add.32  sp, #4
+                add     sp, #4
 .sin_done:      pop     r5
                 pop     r6
                 ret
@@ -812,15 +812,15 @@ fsin:
 ; ---- fcos(x): cosine ----
 ; cos(x) = sin(x + pi/2)
 fcos:
-                ld.32   r1, _f_half_pi
+                ld      r1, _f_half_pi
                 push    r1
-                ld.32   r1, [sp+8]          ; x
+                ld      r1, [sp+8]          ; x
                 push    r1
                 call    fadd                ; x + pi/2
-                add.32  sp, #8
+                add     sp, #8
                 push    r1
                 call    fsin
-                add.32  sp, #4
+                add     sp, #4
                 ret
 
 ; ---- fatan2(y, x): two-argument arctangent ----
@@ -830,117 +830,117 @@ fcos:
 fatan2:
                 push    r6
                 push    r5
-                ld.32   r6, [sp+12]         ; y (a = first arg)
-                ld.32   r5, [sp+16]         ; x (b = second arg)
+                ld      r6, [sp+12]         ; y (a = first arg)
+                ld      r5, [sp+16]         ; x (b = second arg)
                 ; Compute |x| and |y| to pick the right octant
                 push    r6
                 call    fabs
-                add.32  sp, #4
-                st.32   _gm_tmp1, r1        ; |y|
+                add     sp, #4
+                st      _gm_tmp1, r1        ; |y|
                 push    r5
                 call    fabs
-                add.32  sp, #4
-                st.32   _gm_tmp2, r1        ; |x|
+                add     sp, #4
+                st      _gm_tmp2, r1        ; |x|
                 ; If |x| >= |y|: z = y/x, base angle = 0
                 ; If |y| > |x|:  z = x/y, base angle = pi/2 - atan(z)
-                ld.32   r1, _gm_tmp2        ; |x|
-                ld.32   r2, _gm_tmp1        ; |y|
+                ld      r1, _gm_tmp2        ; |x|
+                ld      r2, _gm_tmp1        ; |y|
                 push    r2
                 push    r1
                 call    fcmp
-                add.32  sp, #8
-                blt.32  r1, #0, .y_bigger
+                add     sp, #8
+                blt     r1, #0, .y_bigger
                 ; |x| >= |y|: z = y / x
                 push    r5                  ; x
                 push    r6                  ; y
                 call    fdiv
-                add.32  sp, #8
-                st.32   _gm_tmp3, r1        ; z = y/x
+                add     sp, #8
+                st      _gm_tmp3, r1        ; z = y/x
                 ; atan(z) ≈ z / (1 + 0.28125*z^2). Max error ~1% over
                 ; |z| <= 1, and hits pi/4 much closer at z=1 than the
                 ; truncated Taylor series does.
                 push    r1
                 push    r1
                 call    fmul                ; z^2
-                add.32  sp, #8
+                add     sp, #8
                 ldi     r2, #1049624576     ; 0.28125 = 0x3E900000
                 push    r2
                 push    r1
                 call    fmul                ; 0.28125 * z^2
-                add.32  sp, #8
-                ld.32   r2, _f_one
+                add     sp, #8
+                ld      r2, _f_one
                 push    r2
                 push    r1
                 call    fadd                ; 1 + 0.28125*z^2
-                add.32  sp, #8
+                add     sp, #8
                 push    r1                  ; b = denominator
-                ld.32   r1, _gm_tmp3
+                ld      r1, _gm_tmp3
                 push    r1                  ; a = z
                 call    fdiv                ; z / (1 + 0.28125*z^2)
-                add.32  sp, #8
+                add     sp, #8
                 jmp     .atan_done
 .y_bigger:      ; |y| > |x|: z = x / y
                 push    r6                  ; y
                 push    r5                  ; x
                 call    fdiv
-                add.32  sp, #8
-                st.32   _gm_tmp3, r1        ; z = x/y
+                add     sp, #8
+                st      _gm_tmp3, r1        ; z = x/y
                 ; atan(z) ≈ z / (1 + 0.28125*z^2)
                 push    r1
                 push    r1
                 call    fmul                ; z^2
-                add.32  sp, #8
+                add     sp, #8
                 ldi     r2, #1049624576     ; 0.28125
                 push    r2
                 push    r1
                 call    fmul                ; 0.28125 * z^2
-                add.32  sp, #8
-                ld.32   r2, _f_one
+                add     sp, #8
+                ld      r2, _f_one
                 push    r2
                 push    r1
                 call    fadd                ; 1 + 0.28125*z^2
-                add.32  sp, #8
+                add     sp, #8
                 push    r1                  ; b = denominator
-                ld.32   r1, _gm_tmp3
+                ld      r1, _gm_tmp3
                 push    r1                  ; a = z
                 call    fdiv                ; atan(z) ≈ z / (1 + ...)
-                add.32  sp, #8
+                add     sp, #8
                 ; result = pi/2 - atan(z) with sign of y
                 push    r1
-                ld.32   r1, _f_half_pi
+                ld      r1, _f_half_pi
                 push    r1
                 call    fsub                ; pi/2 - atan(z)
-                add.32  sp, #8
+                add     sp, #8
                 ; Copy sign of y
-                ld.32   r2, r6
-                shr.32  r2, #31             ; sign bit of y
-                beq.32  r2, #0, .atan_done
+                ld      r2, r6
+                shr     r2, #31             ; sign bit of y
+                beq     r2, #0, .atan_done
                 push    r1
                 call    fneg
-                add.32  sp, #4
+                add     sp, #4
 .atan_done:     ; r1 = computed angle in the "right-half-plane" sense.
                 ; If x >= 0 we're done. If x < 0 we shift by ±pi based on
                 ; sign of y. We check signs DIRECTLY on r5/r6 (no fcmp) so
                 ; r1 doesn't get clobbered.
-                ld.32   r2, r5
-                shr.32  r2, #31             ; bit 31 of x
-                beq.32  r2, #0, .final      ; x >= 0 — no adjustment
+                ld      r2, r5
+                shr     r2, #31             ; bit 31 of x
+                beq     r2, #0, .final      ; x >= 0 — no adjustment
                 ; x < 0
-                ld.32   r2, r6
-                shr.32  r2, #31             ; bit 31 of y
-                bne.32  r2, #0, .subpi      ; y < 0 → subtract pi
+                ld      r2, r6
+                shr     r2, #31             ; bit 31 of y
+                bne     r2, #0, .subpi      ; y < 0 → subtract pi
                 ; y >= 0 → angle + pi
-                ld.32   r2, _f_pi
+                ld      r2, _f_pi
                 push    r2                  ; b = pi
                 push    r1                  ; a = angle
                 call    fadd                ; angle + pi
-                add.32  sp, #8
+                add     sp, #8
                 jmp     .final
-.subpi:         ld.32   r2, _f_pi
+.subpi:         ld      r2, _f_pi
                 push    r2                  ; b = pi
                 push    r1                  ; a = angle
                 call    fsub                ; angle - pi
-                add.32  sp, #8
+                add     sp, #8
 .final:         pop     r5
                 pop     r6
                 ret
@@ -949,195 +949,195 @@ fatan2:
 ; Uses the stack (not _gm_tmp1) to save sin(x) across the fcos call,
 ; because fcos → fsin internally clobbers _gm_tmp1.
 ftan:
-                ld.32   r1, [sp+4]          ; x
+                ld      r1, [sp+4]          ; x
                 push    r1
                 call    fsin
-                add.32  sp, #4
+                add     sp, #4
                 push    r1                  ; save sin(x) on stack
-                ld.32   r1, [sp+8]          ; x (shifted by the push above)
+                ld      r1, [sp+8]          ; x (shifted by the push above)
                 push    r1
                 call    fcos
-                add.32  sp, #4
+                add     sp, #4
                 ; r1 = cos(x); saved sin(x) is at [sp]
                 push    r1                  ; b = cos(x)
-                ld.32   r1, [sp+4]          ; a = sin(x) (from saved slot)
+                ld      r1, [sp+4]          ; a = sin(x) (from saved slot)
                 push    r1
                 call    fdiv                ; sin/cos
-                add.32  sp, #8              ; drop fdiv args
-                add.32  sp, #4              ; drop saved sin(x)
+                add     sp, #8              ; drop fdiv args
+                add     sp, #4              ; drop saved sin(x)
                 ret
 
 ; ---- fatan(x): single-arg arctangent = fatan2(x, 1.0) ----
 fatan:
-                ld.32   r1, _f_one
+                ld      r1, _f_one
                 push    r1                  ; b = 1.0
-                ld.32   r1, [sp+8]          ; x (slid down by one push)
+                ld      r1, [sp+8]          ; x (slid down by one push)
                 push    r1                  ; a = x
                 call    fatan2
-                add.32  sp, #8
+                add     sp, #8
                 ret
 
 ; ---- fasin(x): arcsine = fatan2(x, sqrt(1 - x*x)) ----
 ; Input: x in [-1, 1]. Output: angle in [-pi/2, pi/2].
 fasin:
-                ld.32   r1, [sp+4]          ; x
+                ld      r1, [sp+4]          ; x
                 push    r1
                 push    r1
                 call    fmul                ; x*x
-                add.32  sp, #8
+                add     sp, #8
                 push    r1                  ; b = x*x
-                ld.32   r1, _f_one
+                ld      r1, _f_one
                 push    r1                  ; a = 1.0
                 call    fsub                ; 1 - x*x
-                add.32  sp, #8
+                add     sp, #8
                 push    r1
                 call    fsqrt               ; sqrt(1 - x*x)
-                add.32  sp, #4
+                add     sp, #4
                 push    r1                  ; b = sqrt(1 - x*x)
-                ld.32   r1, [sp+8]          ; x
+                ld      r1, [sp+8]          ; x
                 push    r1                  ; a = x
                 call    fatan2
-                add.32  sp, #8
+                add     sp, #8
                 ret
 
 ; ---- facos(x): arccosine = pi/2 - fasin(x) ----
 facos:
-                ld.32   r1, [sp+4]          ; x
+                ld      r1, [sp+4]          ; x
                 push    r1
                 call    fasin
-                add.32  sp, #4
+                add     sp, #4
                 push    r1                  ; b = fasin(x)
-                ld.32   r1, _f_half_pi
+                ld      r1, _f_half_pi
                 push    r1                  ; a = pi/2
                 call    fsub                ; pi/2 - fasin(x)
-                add.32  sp, #8
+                add     sp, #8
                 ret
 
 ; ---- fhypot(x, y): sqrt(x*x + y*y) ----
 fhypot:
-                ld.32   r1, [sp+4]          ; x
+                ld      r1, [sp+4]          ; x
                 push    r1
                 push    r1
                 call    fmul                ; x*x
-                add.32  sp, #8
-                st.32   _gm_tmp1, r1
-                ld.32   r1, [sp+8]          ; y
+                add     sp, #8
+                st      _gm_tmp1, r1
+                ld      r1, [sp+8]          ; y
                 push    r1
                 push    r1
                 call    fmul                ; y*y
-                add.32  sp, #8
+                add     sp, #8
                 push    r1                  ; b = y*y
-                ld.32   r1, _gm_tmp1
+                ld      r1, _gm_tmp1
                 push    r1                  ; a = x*x
                 call    fadd                ; x*x + y*y
-                add.32  sp, #8
+                add     sp, #8
                 push    r1
                 call    fsqrt
-                add.32  sp, #4
+                add     sp, #4
                 ret
 
 ; ---- fdeg2rad(x): degrees to radians = x * (pi/180) ----
 fdeg2rad:
-                ld.32   r1, _f_deg2rad
+                ld      r1, _f_deg2rad
                 push    r1                  ; b = pi/180
-                ld.32   r1, [sp+8]          ; x
+                ld      r1, [sp+8]          ; x
                 push    r1                  ; a = x
                 call    fmul
-                add.32  sp, #8
+                add     sp, #8
                 ret
 
 ; ---- frad2deg(x): radians to degrees = x * (180/pi) ----
 frad2deg:
-                ld.32   r1, _f_rad2deg
+                ld      r1, _f_rad2deg
                 push    r1                  ; b = 180/pi
-                ld.32   r1, [sp+8]          ; x
+                ld      r1, [sp+8]          ; x
                 push    r1                  ; a = x
                 call    fmul
-                add.32  sp, #8
+                add     sp, #8
                 ret
 
 ; ---- fmin(a, b): float minimum ----
 fmin:
-                ld.32   r1, [sp+8]          ; b
+                ld      r1, [sp+8]          ; b
                 push    r1
-                ld.32   r1, [sp+8]          ; a (was sp+4, shifted by push)
+                ld      r1, [sp+8]          ; a (was sp+4, shifted by push)
                 push    r1
                 call    fcmp
-                add.32  sp, #8
-                bgt.32  r1, #0, .fmin_retb  ; a > b → return b
-                ld.32   r1, [sp+4]          ; return a
+                add     sp, #8
+                bgt     r1, #0, .fmin_retb  ; a > b → return b
+                ld      r1, [sp+4]          ; return a
                 ret
-.fmin_retb:     ld.32   r1, [sp+8]          ; return b
+.fmin_retb:     ld      r1, [sp+8]          ; return b
                 ret
 
 ; ---- fmax(a, b): float maximum ----
 fmax:
-                ld.32   r1, [sp+8]          ; b
+                ld      r1, [sp+8]          ; b
                 push    r1
-                ld.32   r1, [sp+8]          ; a
+                ld      r1, [sp+8]          ; a
                 push    r1
                 call    fcmp
-                add.32  sp, #8
-                blt.32  r1, #0, .fmax_retb  ; a < b → return b
-                ld.32   r1, [sp+4]          ; return a
+                add     sp, #8
+                blt     r1, #0, .fmax_retb  ; a < b → return b
+                ld      r1, [sp+4]          ; return a
                 ret
-.fmax_retb:     ld.32   r1, [sp+8]          ; return b
+.fmax_retb:     ld      r1, [sp+8]          ; return b
                 ret
 
 ; ---- fclamp(x, lo, hi): x clamped to [lo, hi] ----
 ; Equivalent to fmin(fmax(x, lo), hi)
 fclamp:
-                ld.32   r1, [sp+8]          ; lo
+                ld      r1, [sp+8]          ; lo
                 push    r1
-                ld.32   r1, [sp+8]          ; x (was sp+4, shifted)
+                ld      r1, [sp+8]          ; x (was sp+4, shifted)
                 push    r1
                 call    fmax
-                add.32  sp, #8
-                ld.32   r2, [sp+12]         ; hi
+                add     sp, #8
+                ld      r2, [sp+12]         ; hi
                 push    r2
                 push    r1
                 call    fmin
-                add.32  sp, #8
+                add     sp, #8
                 ret
 
 ; ---- fsign(x): -1.0, 0.0, or 1.0 ----
 fsign:
-                ld.32   r1, _f_zero
+                ld      r1, _f_zero
                 push    r1                  ; b = 0
-                ld.32   r1, [sp+8]          ; x
+                ld      r1, [sp+8]          ; x
                 push    r1                  ; a = x
                 call    fcmp
-                add.32  sp, #8
-                bgt.32  r1, #0, .fsign_pos
-                blt.32  r1, #0, .fsign_neg
-                ld.32   r1, _f_zero
+                add     sp, #8
+                bgt     r1, #0, .fsign_pos
+                blt     r1, #0, .fsign_neg
+                ld      r1, _f_zero
                 ret
-.fsign_pos:     ld.32   r1, _f_one
+.fsign_pos:     ld      r1, _f_one
                 ret
-.fsign_neg:     ld.32   r1, _f_neg_one
+.fsign_neg:     ld      r1, _f_neg_one
                 ret
 
 ; ---- flerp(a, b, t): linear interpolation = a + t*(b-a) ----
 flerp:
                 ; Compute b - a
-                ld.32   r1, [sp+4]          ; a
+                ld      r1, [sp+4]          ; a
                 push    r1                  ; fsub b = a
-                ld.32   r1, [sp+12]         ; b (was sp+8, shifted)
+                ld      r1, [sp+12]         ; b (was sp+8, shifted)
                 push    r1                  ; fsub a = b
                 call    fsub                ; b - a
-                add.32  sp, #8
+                add     sp, #8
                 ; Multiply by t
-                ld.32   r2, [sp+12]         ; t
+                ld      r2, [sp+12]         ; t
                 push    r2                  ; fmul b = t
                 push    r1                  ; fmul a = (b - a)
                 call    fmul                ; t * (b - a)
-                add.32  sp, #8
+                add     sp, #8
                 ; Add a
                 push    r1                  ; fadd b = t*(b-a)
-                ld.32   r2, [sp+8]          ; a (was sp+4, shifted)
+                ld      r2, [sp+8]          ; a (was sp+4, shifted)
                 push    r2                  ; fadd a = a
                 call    fadd                ; a + t*(b-a)
-                add.32  sp, #8
+                add     sp, #8
                 ret
 
 ; ---- ffloor(x): floor (largest integer <= x) ----
@@ -1145,43 +1145,43 @@ flerp:
 ; and not an exact integer, subtract 1 to round toward -infinity.
 ffloor:
                 push    r6
-                ld.32   r6, [sp+8]          ; x (saved in callee-saved r6)
+                ld      r6, [sp+8]          ; x (saved in callee-saved r6)
                 push    r6
                 call    ftoi
-                add.32  sp, #4
+                add     sp, #4
                 push    r1
                 call    itof                ; r1 = trunc(x) as float
-                add.32  sp, #4
-                st.32   _gm_tmp1, r1        ; save trunc(x)
+                add     sp, #4
+                st      _gm_tmp1, r1        ; save trunc(x)
                 push    r1                  ; b = trunc(x)
                 push    r6                  ; a = x
                 call    fcmp
-                add.32  sp, #8
-                bge.32  r1, #0, .ffl_done   ; x >= trunc → return trunc
-                ld.32   r1, _f_one
+                add     sp, #8
+                bge     r1, #0, .ffl_done   ; x >= trunc → return trunc
+                ld      r1, _f_one
                 push    r1                  ; b = 1.0
-                ld.32   r1, _gm_tmp1
+                ld      r1, _gm_tmp1
                 push    r1                  ; a = trunc
                 call    fsub                ; trunc - 1
-                add.32  sp, #8
+                add     sp, #8
                 pop     r6
                 ret
-.ffl_done:      ld.32   r1, _gm_tmp1
+.ffl_done:      ld      r1, _gm_tmp1
                 pop     r6
                 ret
 
 ; ---- fceil(x): ceiling (smallest integer >= x) = -floor(-x) ----
 fceil:
-                ld.32   r1, [sp+4]          ; x
+                ld      r1, [sp+4]          ; x
                 push    r1
                 call    fneg                ; -x
-                add.32  sp, #4
+                add     sp, #4
                 push    r1
                 call    ffloor              ; floor(-x)
-                add.32  sp, #4
+                add     sp, #4
                 push    r1
                 call    fneg                ; -floor(-x)
-                add.32  sp, #4
+                add     sp, #4
                 ret
 
 ; Geometric scratch globals (NOT reentrant)
@@ -1215,60 +1215,60 @@ _gm_tmp3: db 0,0,0,0
 ; On return: r1=sign (0/1), r2=biased exponent, r3=mantissa with bit 23 set.
 ; If the number is zero (exp==0), r3=0.
 __funpack:
-                ld.32   r3, r1
-                shr.32  r1, #31
-                ld.32   r2, r3
-                shr.32  r2, #23
-                and.32  r2, #0xFF
-                shl.32  r3, #9
-                shr.32  r3, #9
-                beq.32  r2, #0, .zero
+                ld      r3, r1
+                shr     r1, #31
+                ld      r2, r3
+                shr     r2, #23
+                and     r2, #0xFF
+                shl     r3, #9
+                shr     r3, #9
+                beq     r2, #0, .zero
                 ldi     r4, #0x800000
                 push    r4
-                or.32   r3, [sp]
-                add.32  sp, #4
+                or      r3, [sp]
+                add     sp, #4
                 ret
 .zero:          clr     r3
                 ret
 
 ; ---- __fpack: pack sign=r1, exp=r2, mant=r3 → r1=float ----
 __fpack:
-                beq.32  r3, #0, .retzero
-                bge.32  r2, #1, .notunder
+                beq     r3, #0, .retzero
+                bge     r2, #1, .notunder
                 clr     r1
                 ret
-.notunder:      ld.32   r4, #254
-                ble.32  r2, r4, .notover
-                ld.32   r2, #254
+.notunder:      ld      r4, #254
+                ble     r2, r4, .notover
+                ld      r2, #254
                 ldi     r3, #0xFFFFFF
 .notover:       ldi     r4, #0x7FFFFF
                 push    r4
-                and.32  r3, [sp]
-                add.32  sp, #4
-                shl.32  r1, #31
-                shl.32  r2, #23
+                and     r3, [sp]
+                add     sp, #4
+                shl     r1, #31
+                shl     r2, #23
                 push    r2
-                or.32   r1, [sp]
-                add.32  sp, #4
+                or      r1, [sp]
+                add     sp, #4
                 push    r3
-                or.32   r1, [sp]
-                add.32  sp, #4
+                or      r1, [sp]
+                add     sp, #4
                 ret
 .retzero:       clr     r1
                 ret
 
 ; ---- __fnorm: normalise mantissa in r3, adjusting exponent in r2 ----
 __fnorm:
-                beq.32  r3, #0, .done
+                beq     r3, #0, .done
 .loop:          ldi     r4, #0x800000
                 push    r4
-                ld.32   r4, r3
-                and.32  r4, [sp]
-                add.32  sp, #4
-                bne.32  r4, #0, .done
-                shl.32  r3, #1
-                sub.32  r2, #1
-                bgt.32  r2, #0, .loop
+                ld      r4, r3
+                and     r4, [sp]
+                add     sp, #4
+                bne     r4, #0, .done
+                shl     r3, #1
+                sub     r2, #1
+                bgt     r2, #0, .loop
                 clr     r3
 .done:          ret
 
@@ -1276,75 +1276,75 @@ __fnorm:
 fadd:
                 push    r6
                 push    r5
-                ld.32   r1, [sp+12]
+                ld      r1, [sp+12]
                 call    __funpack
-                st.32   _fa_as, r1
-                st.32   _fa_ae, r2
-                st.32   _fa_am, r3
-                ld.32   r1, [sp+16]
+                st      _fa_as, r1
+                st      _fa_ae, r2
+                st      _fa_am, r3
+                ld      r1, [sp+16]
                 call    __funpack
-                ld.32   r5, r2
-                ld.32   r6, r3
-                ld.32   r4, _fa_am
-                beq.32  r4, #0, .ret_b
-                beq.32  r6, #0, .ret_a
-                ld.32   r4, _fa_ae
+                ld      r5, r2
+                ld      r6, r3
+                ld      r4, _fa_am
+                beq     r4, #0, .ret_b
+                beq     r6, #0, .ret_a
+                ld      r4, _fa_ae
                 push    r5
-                sub.32  r4, [sp]
-                add.32  sp, #4
-                bge.32  r4, #0, .a_bigger
-                xor.32  r4, #-1
-                add.32  r4, #1
-                ld.32   r3, _fa_am
+                sub     r4, [sp]
+                add     sp, #4
+                bge     r4, #0, .a_bigger
+                xor     r4, #-1
+                add     r4, #1
+                ld      r3, _fa_am
                 push    r4
-                shr.32  r3, [sp]
-                add.32  sp, #4
-                st.32   _fa_am, r3
-                st.32   _fa_ae, r5
+                shr     r3, [sp]
+                add     sp, #4
+                st      _fa_am, r3
+                st      _fa_ae, r5
                 jmp     .aligned
-.a_bigger:      beq.32  r4, #0, .aligned
+.a_bigger:      beq     r4, #0, .aligned
                 push    r4
-                shr.32  r6, [sp]
-                add.32  sp, #4
-.aligned:       ld.32   r4, _fa_as
+                shr     r6, [sp]
+                add     sp, #4
+.aligned:       ld      r4, _fa_as
                 push    r1
                 push    r4
-                ld.32   r4, [sp]
-                sub.32  r4, [sp+4]
-                add.32  sp, #8
-                bne.32  r4, #0, .diff_sign
-                ld.32   r3, _fa_am
+                ld      r4, [sp]
+                sub     r4, [sp+4]
+                add     sp, #8
+                bne     r4, #0, .diff_sign
+                ld      r3, _fa_am
                 push    r6
-                add.32  r3, [sp]
-                add.32  sp, #4
+                add     r3, [sp]
+                add     sp, #4
                 ldi     r4, #0x1000000
-                blt.32  r3, r4, .no_carry
-                shr.32  r3, #1
-                ld.32   r2, _fa_ae
-                add.32  r2, #1
-                st.32   _fa_ae, r2
-.no_carry:      ld.32   r1, _fa_as
-                ld.32   r2, _fa_ae
+                blt     r3, r4, .no_carry
+                shr     r3, #1
+                ld      r2, _fa_ae
+                add     r2, #1
+                st      _fa_ae, r2
+.no_carry:      ld      r1, _fa_as
+                ld      r2, _fa_ae
                 call    __fpack
                 pop     r5
                 pop     r6
                 ret
-.diff_sign:     ld.32   r3, _fa_am
+.diff_sign:     ld      r3, _fa_am
                 push    r6
-                sub.32  r3, [sp]
-                add.32  sp, #4
-                bgt.32  r3, #0, .a_larger
-                beq.32  r3, #0, .ret_zero
-                xor.32  r3, #-1
-                add.32  r3, #1
-                ld.32   r2, _fa_ae
+                sub     r3, [sp]
+                add     sp, #4
+                bgt     r3, #0, .a_larger
+                beq     r3, #0, .ret_zero
+                xor     r3, #-1
+                add     r3, #1
+                ld      r2, _fa_ae
                 call    __fnorm
                 call    __fpack
                 pop     r5
                 pop     r6
                 ret
-.a_larger:      ld.32   r1, _fa_as
-                ld.32   r2, _fa_ae
+.a_larger:      ld      r1, _fa_as
+                ld      r2, _fa_ae
                 call    __fnorm
                 call    __fpack
                 pop     r5
@@ -1354,114 +1354,114 @@ fadd:
                 pop     r5
                 pop     r6
                 ret
-.ret_b:         ld.32   r1, [sp+16]
+.ret_b:         ld      r1, [sp+16]
                 pop     r5
                 pop     r6
                 ret
-.ret_a:         ld.32   r1, [sp+12]
+.ret_a:         ld      r1, [sp+12]
                 pop     r5
                 pop     r6
                 ret
 
 ; ---- fsub(a, b): flip sign of b, call fadd ----
 fsub:
-                ld.32   r1, [sp+8]
+                ld      r1, [sp+8]
                 ldi     r2, #0x80000000
                 push    r2
-                xor.32  r1, [sp]
-                add.32  sp, #4
+                xor     r1, [sp]
+                add     sp, #4
                 push    r1
-                ld.32   r1, [sp+8]
+                ld      r1, [sp+8]
                 push    r1
                 call    fadd
-                add.32  sp, #8
+                add     sp, #8
                 ret
 
 ; ---- fmul(a, b): float multiplication (uses globals, NOT reentrant) ----
 fmul:
                 push    r6
                 push    r5
-                ld.32   r1, [sp+12]
+                ld      r1, [sp+12]
                 call    __funpack
-                st.32   _fm_as, r1
-                st.32   _fm_ae, r2
-                st.32   _fm_am, r3
-                ld.32   r1, [sp+16]
+                st      _fm_as, r1
+                st      _fm_ae, r2
+                st      _fm_am, r3
+                ld      r1, [sp+16]
                 call    __funpack
-                ld.32   r4, _fm_as
+                ld      r4, _fm_as
                 push    r1
-                xor.32  r4, [sp]
-                add.32  sp, #4
-                st.32   _fm_rs, r4
-                ld.32   r4, _fm_am
-                beq.32  r4, #0, .retzero
-                beq.32  r3, #0, .retzero
-                ld.32   r5, _fm_ae
+                xor     r4, [sp]
+                add     sp, #4
+                st      _fm_rs, r4
+                ld      r4, _fm_am
+                beq     r4, #0, .retzero
+                beq     r3, #0, .retzero
+                ld      r5, _fm_ae
                 push    r2
-                add.32  r5, [sp]
-                add.32  sp, #4
-                sub.32  r5, #127
-                st.32   _fm_re, r5
+                add     r5, [sp]
+                add     sp, #4
+                sub     r5, #127
+                st      _fm_re, r5
                 ; Split mantissas into hi12/lo12
-                ld.32   r6, _fm_am
-                ld.32   r1, r6
-                shr.32  r1, #12
-                st.32   _fm_ah, r1
-                ld.32   r1, r6
-                and.32  r1, #0xFFF
-                st.32   _fm_al, r1
-                ld.32   r1, r3
-                shr.32  r1, #12
-                st.32   _fm_bh, r1
-                and.32  r3, #0xFFF
-                st.32   _fm_bl, r3
+                ld      r6, _fm_am
+                ld      r1, r6
+                shr     r1, #12
+                st      _fm_ah, r1
+                ld      r1, r6
+                and     r1, #0xFFF
+                st      _fm_al, r1
+                ld      r1, r3
+                shr     r1, #12
+                st      _fm_bh, r1
+                and     r3, #0xFFF
+                st      _fm_bl, r3
                 ; aH * bH
-                ld.32   r1, _fm_bh
+                ld      r1, _fm_bh
                 push    r1
-                ld.32   r1, _fm_ah
+                ld      r1, _fm_ah
                 push    r1
                 call    __mul
-                add.32  sp, #8
-                ld.32   r6, r1
+                add     sp, #8
+                ld      r6, r1
                 ; aH * bL
-                ld.32   r1, _fm_bl
+                ld      r1, _fm_bl
                 push    r1
-                ld.32   r1, _fm_ah
+                ld      r1, _fm_ah
                 push    r1
                 call    __mul
-                add.32  sp, #8
-                ld.32   r5, r1
+                add     sp, #8
+                ld      r5, r1
                 ; aL * bH
-                ld.32   r1, _fm_bh
+                ld      r1, _fm_bh
                 push    r1
-                ld.32   r1, _fm_al
+                ld      r1, _fm_al
                 push    r1
                 call    __mul
-                add.32  sp, #8
+                add     sp, #8
                 push    r5
-                add.32  r1, [sp]
-                add.32  sp, #4
-                shr.32  r1, #12
+                add     r1, [sp]
+                add     sp, #4
+                shr     r1, #12
                 push    r1
-                add.32  r6, [sp]
-                add.32  sp, #4
+                add     r6, [sp]
+                add     sp, #4
                 ; r6 has bits [47:24] of the 48-bit product.
                 ; We need bits [47:23] (one more), so shift left by 1.
-                ld.32   r3, r6
-                shl.32  r3, #1
+                ld      r3, r6
+                shl     r3, #1
                 ; Also pick up the top bit of the cross term that we shifted out:
                 ; (cross & 0x800) >> 11 — but we've already lost it. Approximate
                 ; by just the shift, which is correct to 23 bits.
                 ; Now normalise: if bit 24 is set, shift right and bump exp.
                 ldi     r4, #0x1000000
-                blt.32  r3, r4, .nonorm
-                shr.32  r3, #1
-                ld.32   r2, _fm_re
-                add.32  r2, #1
-                st.32   _fm_re, r2
-.nonorm:        ld.32   r2, _fm_re
+                blt     r3, r4, .nonorm
+                shr     r3, #1
+                ld      r2, _fm_re
+                add     r2, #1
+                st      _fm_re, r2
+.nonorm:        ld      r2, _fm_re
                 call    __fnorm
-                ld.32   r1, _fm_rs
+                ld      r1, _fm_rs
                 call    __fpack
                 pop     r5
                 pop     r6
@@ -1475,25 +1475,25 @@ fmul:
 fdiv:
                 push    r6
                 push    r5
-                ld.32   r1, [sp+12]
+                ld      r1, [sp+12]
                 call    __funpack
-                st.32   _fm_as, r1
-                st.32   _fm_ae, r2
-                ld.32   r6, r3
-                ld.32   r1, [sp+16]
+                st      _fm_as, r1
+                st      _fm_ae, r2
+                ld      r6, r3
+                ld      r1, [sp+16]
                 call    __funpack
-                beq.32  r3, #0, .divzero
-                beq.32  r6, #0, .retzero
-                ld.32   r4, _fm_as
+                beq     r3, #0, .divzero
+                beq     r6, #0, .retzero
+                ld      r4, _fm_as
                 push    r1
-                xor.32  r4, [sp]
-                add.32  sp, #4
-                st.32   _fm_rs, r4
-                ld.32   r5, _fm_ae
+                xor     r4, [sp]
+                add     sp, #4
+                st      _fm_rs, r4
+                ld      r5, _fm_ae
                 push    r2
-                sub.32  r5, [sp]
-                add.32  sp, #4
-                add.32  r5, #127
+                sub     r5, [sp]
+                add     sp, #4
+                add     r5, #127
                 ; Mantissa divide: a_mant / b_mant → quotient mantissa.
                 ; Both are 24-bit with bit 23 = implicit 1. The quotient
                 ; needs to be a 24-bit Q23 number. Shift dividend left by
@@ -1547,23 +1547,23 @@ fdiv:
                 ;       quotient |= 1
                 ;     remainder <<= 1
                 ; This produces Q23 quotient directly.
-                ld.32   r2, r6              ; remainder = a_mant
+                ld      r2, r6              ; remainder = a_mant
                 clr     r1                  ; quotient = 0
-                ld.32   r4, #24
-.dloop:         beq.32  r4, #0, .ddone
-                shl.32  r1, #1              ; quotient <<= 1
-                blt.32  r2, r3, .dnosub     ; remainder < divisor?
+                ld      r4, #24
+.dloop:         beq     r4, #0, .ddone
+                shl     r1, #1              ; quotient <<= 1
+                blt     r2, r3, .dnosub     ; remainder < divisor?
                 push    r3
-                sub.32  r2, [sp]            ; remainder -= divisor
-                add.32  sp, #4
-                or.32   r1, #1              ; quotient |= 1
-.dnosub:        shl.32  r2, #1              ; remainder <<= 1
-                sub.32  r4, #1
+                sub     r2, [sp]            ; remainder -= divisor
+                add     sp, #4
+                or      r1, #1              ; quotient |= 1
+.dnosub:        shl     r2, #1              ; remainder <<= 1
+                sub     r4, #1
                 jmp     .dloop
-.ddone:         ld.32   r3, r1
-                ld.32   r2, r5
+.ddone:         ld      r3, r1
+                ld      r2, r5
                 call    __fnorm
-                ld.32   r1, _fm_rs
+                ld      r1, _fm_rs
                 call    __fpack
                 pop     r5
                 pop     r6
@@ -1572,8 +1572,8 @@ fdiv:
                 pop     r5
                 pop     r6
                 ret
-.divzero:       ld.32   r1, _fm_as
-                ld.32   r2, #254
+.divzero:       ld      r1, _fm_as
+                ld      r2, #254
                 ldi     r3, #0xFFFFFF
                 call    __fpack
                 pop     r5
@@ -1582,38 +1582,38 @@ fdiv:
 
 ; ---- fcmp(a, b): float compare → -1 / 0 / +1 in r1 ----
 fcmp:
-                ld.32   r1, [sp+4]
-                ld.32   r2, [sp+8]
-                ld.32   r3, r1
-                shl.32  r3, #1
-                ld.32   r4, r2
-                shl.32  r4, #1
+                ld      r1, [sp+4]
+                ld      r2, [sp+8]
+                ld      r3, r1
+                shl     r3, #1
+                ld      r4, r2
+                shl     r4, #1
                 push    r4
-                or.32   r3, [sp]
-                add.32  sp, #4
-                beq.32  r3, #0, .eq
-                ld.32   r3, r1
-                shr.32  r3, #31
-                ld.32   r4, r2
-                shr.32  r4, #31
+                or      r3, [sp]
+                add     sp, #4
+                beq     r3, #0, .eq
+                ld      r3, r1
+                shr     r3, #31
+                ld      r4, r2
+                shr     r4, #31
                 push    r4
-                ld.32   r4, r3
-                sub.32  r4, [sp]
-                add.32  sp, #4
-                bgt.32  r4, #0, .lt
-                blt.32  r4, #0, .gt
+                ld      r4, r3
+                sub     r4, [sp]
+                add     sp, #4
+                bgt     r4, #0, .lt
+                blt     r4, #0, .gt
                 push    r2
-                sub.32  r1, [sp]
-                add.32  sp, #4
-                beq.32  r1, #0, .eq
-                bne.32  r3, #0, .neg_both
-                blt.32  r1, #0, .lt
+                sub     r1, [sp]
+                add     sp, #4
+                beq     r1, #0, .eq
+                bne     r3, #0, .neg_both
+                blt     r1, #0, .lt
                 jmp     .gt
-.neg_both:      blt.32  r1, #0, .gt
+.neg_both:      blt     r1, #0, .gt
                 jmp     .lt
-.lt:            ld.32   r1, #-1
+.lt:            ld      r1, #-1
                 ret
-.gt:            ld.32   r1, #1
+.gt:            ld      r1, #1
                 ret
 .eq:            clr     r1
                 ret
@@ -1621,34 +1621,34 @@ fcmp:
 ; ---- itof(x): signed int → float ----
 itof:
                 push    r5
-                ld.32   r3, [sp+8]
-                beq.32  r3, #0, .zero
+                ld      r3, [sp+8]
+                beq     r3, #0, .zero
                 clr     r1
-                bge.32  r3, #0, .pos
-                ld.32   r1, #1
-                xor.32  r3, #-1
-                add.32  r3, #1
+                bge     r3, #0, .pos
+                ld      r1, #1
+                xor     r3, #-1
+                add     r3, #1
 .pos:           push    r1
                 push    r3
                 call    clz
-                ld.32   r5, r1
+                ld      r5, r1
                 pop     r3
-                ld.32   r2, #158
+                ld      r2, #158
                 push    r5
-                sub.32  r2, [sp]
-                add.32  sp, #4
-                ld.32   r4, r5
-                sub.32  r4, #8
-                blt.32  r4, #0, .shr
+                sub     r2, [sp]
+                add     sp, #4
+                ld      r4, r5
+                sub     r4, #8
+                blt     r4, #0, .shr
                 push    r4
-                shl.32  r3, [sp]
-                add.32  sp, #4
+                shl     r3, [sp]
+                add     sp, #4
                 jmp     .pack
-.shr:           xor.32  r4, #-1
-                add.32  r4, #1
+.shr:           xor     r4, #-1
+                add     r4, #1
                 push    r4
-                shr.32  r3, [sp]
-                add.32  sp, #4
+                shr     r3, [sp]
+                add     sp, #4
 .pack:          pop     r1
                 call    __fpack
                 pop     r5
@@ -1659,28 +1659,28 @@ itof:
 
 ; ---- ftoi(x): float → signed int (truncate toward zero) ----
 ftoi:
-                ld.32   r1, [sp+4]
+                ld      r1, [sp+4]
                 call    __funpack
-                ld.32   r4, #127
-                blt.32  r2, r4, .zero
-                ld.32   r4, #150
+                ld      r4, #127
+                blt     r2, r4, .zero
+                ld      r4, #150
                 push    r4
-                sub.32  r2, [sp]
-                add.32  sp, #4
-                blt.32  r2, #0, .shr
+                sub     r2, [sp]
+                add     sp, #4
+                blt     r2, #0, .shr
                 push    r2
-                shl.32  r3, [sp]
-                add.32  sp, #4
+                shl     r3, [sp]
+                add     sp, #4
                 jmp     .sign
-.shr:           xor.32  r2, #-1
-                add.32  r2, #1
+.shr:           xor     r2, #-1
+                add     r2, #1
                 push    r2
-                shr.32  r3, [sp]
-                add.32  sp, #4
-.sign:          beq.32  r1, #0, .pos
-                xor.32  r3, #-1
-                add.32  r3, #1
-.pos:           ld.32   r1, r3
+                shr     r3, [sp]
+                add     sp, #4
+.sign:          beq     r1, #0, .pos
+                xor     r3, #-1
+                add     r3, #1
+.pos:           ld      r1, r3
                 ret
 .zero:          clr     r1
                 ret
@@ -1707,13 +1707,13 @@ _fm_bl: db 0,0,0,0
 ; _heap_ptr by size. No bounds check, no free.
 ; Caller must initialise _heap_ptr before the first call.
 __halloc:
-                ld.32   r1, _heap_ptr       ; r1 = old top (return value)
-                ld.32   r2, [sp+4]      ; r2 = size
+                ld      r1, _heap_ptr       ; r1 = old top (return value)
+                ld      r2, [sp+4]      ; r2 = size
                 push    r1                          ; stash old top on stack
                 push    r2                          ; push size
-                add.32  r1, [sp]            ; r1 = old + size
-                add.32  sp, #4              ; pop size
-                st.32   _heap_ptr, r1       ; new heap top
+                add     r1, [sp]            ; r1 = old + size
+                add     sp, #4              ; pop size
+                st      _heap_ptr, r1       ; new heap top
                 pop     r1                          ; restore return value
                 ret
 
@@ -1721,13 +1721,13 @@ __halloc:
 ; Length of null-terminated string at [sp+4]. Result in r1.
 __strlen:
                 push    r5
-                ld.32   r5, [sp+8]      ; s
-                ld.32   r1, #0
+                ld      r5, [sp+8]      ; s
+                ld      r1, #0
 .loop:
                 ld.8    r2, [r5]
                 beq.8   r2, #0, .done
-                add.32  r1, #1
-                add.32  r5, #1
+                add     r1, #1
+                add     r5, #1
                 jmp     .loop
 .done:
                 pop     r5
@@ -1736,14 +1736,14 @@ __strlen:
 ; ---- __strcpy(dst, src) ----
 ; Copies src (incl. null) to dst. Args: dst at [sp+4], src at [sp+8].
 __strcpy:
-                ld.32   r2, [sp+4]      ; dst
-                ld.32   r3, [sp+8]      ; src
+                ld      r2, [sp+4]      ; dst
+                ld      r3, [sp+8]      ; src
 .loop:
                 ld.8    r1, [r3]
                 st.8    [r2], r1
                 beq.8   r1, #0, .done
-                add.32  r2, #1
-                add.32  r3, #1
+                add     r2, #1
+                add     r3, #1
                 jmp     .loop
 .done:
                 ret
@@ -1751,78 +1751,78 @@ __strcpy:
 ; ---- __strcmp(a, b) ----
 ; Returns 0 if equal, otherwise (first differing byte of a) - (b) in r1.
 __strcmp:
-                ld.32   r2, [sp+4]      ; a
-                ld.32   r3, [sp+8]      ; b
+                ld      r2, [sp+4]      ; a
+                ld      r3, [sp+8]      ; b
 .loop:
                 ld.8    r1, [r2]
                 ld.8    r4, [r3]
                 bne.8   r1, r4, .diff
                 beq.8   r1, #0, .eq
-                add.32  r2, #1
-                add.32  r3, #1
+                add     r2, #1
+                add     r3, #1
                 jmp     .loop
 .eq:
-                ld.32   r1, #0
+                ld      r1, #0
                 ret
 .diff:
                 push    r4
-                sub.32  r1, [sp]
-                add.32  sp, #4
+                sub     r1, [sp]
+                add     sp, #4
                 ret
 
 ; ---- __strcat(a, b) ----
 ; Allocates a new string in heap holding a ++ b and returns its pointer.
 ; Uses globals _strcat_a/_strcat_b/_strcat_p as scratch (NOT reentrant).
 __strcat:
-                ld.32   r1, [sp+4]
-                st.32   _strcat_a, r1
-                ld.32   r1, [sp+8]
-                st.32   _strcat_b, r1
+                ld      r1, [sp+4]
+                st      _strcat_a, r1
+                ld      r1, [sp+8]
+                st      _strcat_b, r1
                 ; len(a) -> stash in _strcat_p temporarily
-                ld.32   r1, _strcat_a
+                ld      r1, _strcat_a
                 push    r1
                 call    __strlen
-                add.32  sp, #4
-                st.32   _strcat_p, r1
+                add     sp, #4
+                st      _strcat_p, r1
                 ; len(b) -> r1
-                ld.32   r1, _strcat_b
+                ld      r1, _strcat_b
                 push    r1
                 call    __strlen
-                add.32  sp, #4
+                add     sp, #4
                 ; total = la + lb + 1
-                ld.32   r2, _strcat_p
+                ld      r2, _strcat_p
                 push    r2
-                add.32  r1, [sp]
-                add.32  sp, #4
-                add.32  r1, #1
+                add     r1, [sp]
+                add     sp, #4
+                add     r1, #1
                 ; alloc(total) -> r1
                 push    r1
                 call    __halloc
-                add.32  sp, #4
-                st.32   _strcat_p, r1       ; remember new buffer
+                add     sp, #4
+                st      _strcat_p, r1       ; remember new buffer
                 ; strcpy(p, a)  — push a (src) then p (dst)
-                ld.32   r1, _strcat_a
+                ld      r1, _strcat_a
                 push    r1
-                ld.32   r1, _strcat_p
+                ld      r1, _strcat_p
                 push    r1
                 call    __strcpy
-                add.32  sp, #8
+                add     sp, #8
                 ; dest2 = p + la (recompute la)
-                ld.32   r1, _strcat_a
+                ld      r1, _strcat_a
                 push    r1
                 call    __strlen
-                add.32  sp, #4
-                ld.32   r2, _strcat_p
+                add     sp, #4
+                ld      r2, _strcat_p
                 push    r2
-                add.32  r1, [sp]
-                add.32  sp, #4
+                add     r1, [sp]
+                add     sp, #4
                 ; strcpy(p+la, b) — push b (src) then dst
-                ld.32   r2, _strcat_b
+                ld      r2, _strcat_b
                 push    r2
                 push    r1
                 call    __strcpy
-                add.32  sp, #8
-                ld.32   r1, _strcat_p       ; return new pointer
+                add     sp, #8
+                ld      r1, _strcat_p       ; return new pointer
                 ret
 
 ; ---- Heap and string helper globals ----

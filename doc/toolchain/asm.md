@@ -24,9 +24,9 @@ One statement per line. Whitespace is mostly insignificant. Mnemonics, register 
 
 ```asm
 ; comments start with a semicolon and run to end of line
-                ld.32   r1, #42         ; load immediate
-                add.32  r1, #1
-                st.32   _counter, r1
+                ld      r1, #42         ; load immediate
+                add     r1, #1
+                st      _counter, r1
                 jmp     .done
 .done:          ret
 ```
@@ -40,8 +40,8 @@ A label is a name followed by `:`, or any name appearing as the first word of a 
 
 ```asm
 puts:
-                sub.32  sp, #4
-                st.32   [sp], r6
+                sub     sp, #4
+                st      [sp], r6
 .loop:
                 ld.8    r1, [r5++]
                 beq.8   r1, #0, .done
@@ -56,22 +56,22 @@ References to a local label resolve relative to the enclosing global label. To r
 ## Number literals
 
 ```asm
-ld.32 r1, #42       ; decimal
-ld.32 r1, #0xFF     ; hex
-ld.32 r1, #0b1010   ; binary
-ld.32 r1, #-1       ; negative
+ld    r1, #42       ; decimal
+ld    r1, #0xFF     ; hex
+ld    r1, #0b1010   ; binary
+ld    r1, #-1       ; negative
 ```
 
 ## Mnemonics and sizes
 
-Most data-touching instructions take a `.8`, `.16`, or `.32` size suffix:
+Most data-touching instructions take a `.8` or `.16` size suffix; the default (no suffix) is 32-bit:
 
 ```asm
 ld.8   r1, [r2]
 ld.16  r1, [r2]
-ld.32  r1, [r2]
+ld     r1, [r2]              ; default 32-bit — same as the obsolete `ld.32`
 st.8   [r2], r1
-add.32 r1, #1
+add    r1, #1
 beq.8  r1, #0, .done
 ```
 
@@ -96,14 +96,14 @@ The complete instruction list — the assembler accepts both real opcodes and a 
 | `ret`        | real   | Pop return address, jump to it                            |
 | `jmp`        | real   | Unconditional jump via AGU (`jmp label`, `jmp r2`, `jmp [r2+4]`) |
 | `clr rD`     | pseudo | Clear `rD` to zero. Expands to `ld.<sz> rD, r0`. Size suffix is honoured (`.8`/`.16` clear only the low byte/halfword and preserve the upper bits — same size-merge behaviour as `ld`). |
-| `ldi rD, #imm` | pseudo | Load any 32-bit constant into `rD`. Expands to a single `ld.32` if the value fits in the 20-bit signed immediate, otherwise an `ld.32` + `ldh` pair. |
-| `push rN`    | pseudo | Two instructions: `sub.32 sp, #4` then `st.32 [sp], rN`. A label on a `push` line points at the first expanded instruction. |
-| `pop rN`     | pseudo | One instruction: `ld.32 rN, [sp+=4]`.                     |
+| `ldi rD, #imm` | pseudo | Load any 32-bit constant into `rD`. Expands to a single `ld ` if the value fits in the 20-bit signed immediate, otherwise an `ld ` + `ldh` pair. |
+| `push rN`    | pseudo | Two instructions: `sub sp, #4` then `st [sp], rN`. A label on a `push` line points at the first expanded instruction. |
+| `pop rN`     | pseudo | One instruction: `ld rN, [sp+=4]`.                     |
 
 ```asm
                 push    r6              ; save r6
                 clr     r1              ; r1 = 0
-                ld.32   r2, r3          ; r2 = r3 (register-to-register move)
+                ld      r2, r3          ; r2 = r3 (register-to-register move)
                 ldi     r3, #0xDEADBEEF ; load any 32-bit constant
                 call    do_thing
                 pop     r6              ; restore r6
@@ -117,27 +117,27 @@ The complete instruction list — the assembler accepts both real opcodes and a 
 ### Register direct
 
 ```asm
-ld.32 r1, r2        ; mode 00 — register-to-register move (load value of r2 into r1)
-add.32 r1, r2       ; r1 += r2 (no — see below)
+ld    r1, r2        ; mode 00 — register-to-register move (load value of r2 into r1)
+add    r1, r2       ; r1 += r2 (no — see below)
 ```
 
-**Important:** the operand register is read through the AGU. For ALU ops the operand is a *memory operand*, so `add.32 r1, r2` is `r1 += mem[r2]`, not `r1 += r2`. To compute `r1 += r2` register-to-register you need a stack roundtrip:
+**Important:** the operand register is read through the AGU. For ALU ops the operand is a *memory operand*, so `add r1, r2` is `r1 += mem[r2]`, not `r1 += r2`. To compute `r1 += r2` register-to-register you need a stack roundtrip:
 
 ```asm
-sub.32  sp, #4
-st.32   [sp], r2
-add.32  r1, [sp]
-add.32  sp, #4
+sub     sp, #4
+st      [sp], r2
+add     r1, [sp]
+add     sp, #4
 ```
 
-`ld.32 r1, r2` works as a register move because the load *uses* the AGU's immediate-mode output as the value to write.
+`ld r1, r2` works as a register move because the load *uses* the AGU's immediate-mode output as the value to write.
 
 ### Immediate
 
 ```asm
-ld.32 r1, #42
-add.32 r1, #-1
-ld.32 r1, #_some_label   ; label address as immediate
+ld    r1, #42
+add    r1, #-1
+ld    r1, #_some_label   ; label address as immediate
 ```
 
 Immediates are 20-bit sign-extended (range −524288 … 524287). The `ldh` (load high) instruction can be used in tandem with `ld` to construct full 32-bit immediates if you need values outside that range.
@@ -148,7 +148,7 @@ A bare label or numeric literal (no `#`, no `[]`) is treated as an absolute addr
 
 ```asm
 ld.8  r4, 0xFFFF0004      ; read UART status (busy flag)
-st.32 _counter, r1        ; store r1 at the address of _counter
+st    _counter, r1        ; store r1 at the address of _counter
 ```
 
 ### Memory addressing modes
@@ -174,7 +174,7 @@ Idioms you'll see all over the codebase:
 ```asm
 push    r1                  ; sp -= 4 ; mem[sp] = r1
 pop     r1                  ; r1 = mem[sp] ; sp += 4
-ld.32   r1, [sp+8]          ; load argument from [sp+8]
+ld      r1, [sp+8]          ; load argument from [sp+8]
 ld.8    r1, [r5++]          ; read byte and post-increment pointer
 ```
 
@@ -184,11 +184,11 @@ Because `r0` is hardwired to zero, anywhere `r0` would appear inside the bracket
 
 ```asm
 beq.8   r1, #0, .done       ; branch if low byte of r1 == 0
-bne.32  r1, r2, .loop       ; branch if r1 != r2
-blt.32  r1, #10, .small     ; branch if r1 < 10  (signed)
+bne     r1, r2, .loop       ; branch if r1 != r2
+blt     r1, #10, .small     ; branch if r1 < 10  (signed)
 ```
 
-The branch comparand can be a 3-bit immediate (`#0` … `#7`) or a register. The `.8`/`.16`/`.32` suffix sets the comparison width — sub-word forms mask the operands to that width before comparing, which avoids the size-merge gotcha that bites loads.
+The branch comparand can be a 3-bit immediate (`#0` … `#7`) or a register. The `.8` / `.16` suffix sets the comparison width (default is full 32-bit) — sub-word forms mask the operands to that width before comparing, which avoids the size-merge gotcha that bites loads.
 
 The branch target is a 16-bit absolute address. Both labels and integer literals work as targets.
 
@@ -213,7 +213,7 @@ Marks the end of assembly. Anything after it is ignored. Both `cc.py` and `basic
 `--opcodes` prints a one-line listing per source line, including the assembled hex word, the address, and the source. Useful for sanity-checking instruction encoding by hand.
 
 ```
-0000: 06000004  beq.32 r0, #0, 0x4         jmp __start
+0000: 06000004  beq    r0, #0, 0x4         jmp __start
 0004: 1A000000  ret
 ...
 ```
