@@ -1442,17 +1442,14 @@ class CodeGen:
             self.gen_expr(node.right, other)
             self.pop(dest)
 
-            # For reg-reg ALU ops, we need to go through memory.
-            # Push right operand, then use stack-relative addressing.
+            # Reg-reg ALU via AGU mode 00: bare register operand is the
+            # register's value directly.
             # `shr_op` was set above based on signed-ness of left operand.
             OP_MAP = {'+': 'add', '-': 'sub', '&': 'and', '|': 'or',
                       '^': 'xor', '<<': 'shl', '>>': shr_op}
             MUL_MAP = {'*': '__mul', '/': '__div', '%': '__mod'}
             if op in OP_MAP:
-                self.push(other)
-                self.emit(f'                {OP_MAP[op]}.32 r{dest}, [sp]')
-                self.emit(f'                add.32  sp, #4')
-                self.stack_depth -= 1
+                self.emit(f'                {OP_MAP[op]}.32 r{dest}, r{other}')
             elif op in MUL_MAP:
                 # Runtime helper call: push args right-to-left (b then a)
                 self.push(other)

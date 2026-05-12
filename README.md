@@ -13,7 +13,7 @@ I designed the MPU ISA and initial Verilog implementation. Because my spare time
 - **32-bit fixed-width instructions** with a uniform encoding: 5-bit opcode, 3-bit register, 2-bit size, and a 20-bit payload
 - **8 registers** — `r0` is hardwired to zero (the classic RISC trick), `r7` is aliased as `sp` (the stack pointer). The other six are general-purpose. Having `r0 = 0` available everywhere gives you a free zero immediate, an unconditional branch (`jmp target`), a register clear (`clr rD`), and a "no base / no index" placeholder inside every AGU operand — without burning an opcode bit on any of them.
 - **21 instructions**: LD, LDH, ST, ADD, SUB, AND, OR, XOR, SHL, SHR, ASR, 6 branches, CALL, RET, JMP, NOP
-- **Address Generation Unit (AGU)** shared by 9 instructions, providing register-direct, immediate, absolute, indexed, indexed+offset, and post-increment addressing modes
+- **Address Generation Unit (AGU)** shared by 12 instructions (LD, ST, ADD, SUB, AND, OR, XOR, SHL, SHR, ASR, CALL, JMP), providing register-direct, immediate, absolute, indexed, indexed+offset, and post-increment addressing modes
 - **5-stage state machine**: FETCH, DECODE, EXECUTE, MEM, WB
 - **64 KB SPRAM** for program and data (unified memory)
 - **Memory-mapped I/O**: UART TX/RX at `0xFFFF0000`, LED register at `0xFFFF0008`, 8-bit GPIO at `0xFFFF0010`/`0xFFFF0014`, I²C master at `0xFFFF0018`/`0xFFFF001C`, sigma-delta ADC at `0xFFFF0020`
@@ -26,7 +26,7 @@ I designed the MPU ISA and initial Verilog implementation. Because my spare time
 | **I²C master** | `0xFFFF0018` (data) / `0xFFFF001C` (cmd / status) | ~100 kHz I²C, 7-bit addressing, START / STOP / repeated-start / write / read with controllable ACK. The master blocks the CPU until each transaction completes via a `busy` bit. | 2.2 kΩ–10 kΩ pull-ups on SCL and SDA to 3.3 V |
 | **Sigma-delta ADC** | `0xFFFF0020` | 12-bit single-ended ADC built from a 1-bit feedback loop closed by an external RC network. Conversion runs continuously; reading the register snapshots the latest count. | Two matched 10 kΩ resistors and a 1–10 nF capacitor (charge-balancing network) |
 
-The standard library exposes all three as ordinary function calls — `gpio_set_dir`, `gpio_write`, `gpio_read`, `i2c_start`, `i2c_stop`, `i2c_write`, `i2c_read`, and `adc_read` — usable from C, BASIC, and Pascal. A complete worked example using the I²C master against a real BME280 sensor lives at [`testing/bme280demo.c`](testing/bme280demo.c) (and there are line-for-line ports in [`bme280demo.bas`](testing/bme280demo.bas) and [`bme280demo.pas`](testing/bme280demo.pas)).
+The standard library exposes all three as ordinary function calls — `gpio_set_dir`, `gpio_write`, `gpio_read`, `i2c_start`, `i2c_stop`, `i2c_write`, `i2c_read`, and `adc_read` — usable from C, BASIC, and Pascal. A complete worked example using the I²C master against a real BME280 sensor lives at [`testing/c/bme280test.c`](testing/c/bme280test.c) (and there are line-for-line ports in [`testing/basic/bme280test.bas`](testing/basic/bme280test.bas) and [`testing/pascal/bme280test.pas`](testing/pascal/bme280test.pas)).
 
 ## Hardware
 
@@ -65,19 +65,20 @@ All toolchain scripts accept an input filename without extension and assume the 
 
 ### Quick start
 
+Sample programs live under `testing/asm/`, `testing/c/`, `testing/basic/`, and `testing/pascal/`.
+
 ```bash
 # Assemble and run
-python3 toolchain/asm.py testing/hello.asm
-python3 toolchain/flash.py testing/hello.mpu
+python3 toolchain/asm.py testing/asm/hello.asm
+python3 toolchain/flash.py testing/asm/hello.mpu
 
-# Compile C, assemble, and run
-python3 toolchain/cc.py testing/printf.c
-python3 toolchain/asm.py testing/printf.asm
-python3 toolchain/flash.py testing/printf.mpu
+# Compile C and run (cc.py emits .mpu directly; -S keeps the .s)
+python3 toolchain/cc.py testing/c/printf.c
+python3 toolchain/flash.py testing/c/printf.mpu
 
 # Simulate without hardware
-python3 toolchain/sim.py testing/hello.mpu
-python3 toolchain/sim.py testing/hello.mpu --trace
+python3 toolchain/sim.py testing/c/hello.mpu
+python3 toolchain/sim.py testing/c/hello.mpu --trace
 ```
 
 ### Build the FPGA bitstream

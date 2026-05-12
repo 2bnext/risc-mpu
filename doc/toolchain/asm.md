@@ -12,10 +12,10 @@ python3 toolchain/asm.py program.asm out.mpu        # explicit output
 python3 toolchain/asm.py --opcodes program.asm      # also print a listing
 ```
 
-The Makefile in `testing/` chains things automatically:
+The Makefile in `testing/` chains things automatically (asm sources live under `testing/asm/`):
 
 ```sh
-make foo.mpu      # foo.asm -> foo.mpu
+make asm/hello.mpu     # asm/hello.asm -> asm/hello.mpu
 ```
 
 ## Source format
@@ -117,20 +117,11 @@ The complete instruction list — the assembler accepts both real opcodes and a 
 ### Register direct
 
 ```asm
-ld    r1, r2        ; mode 00 — register-to-register move (load value of r2 into r1)
-add    r1, r2       ; r1 += r2 (no — see below)
+ld    r1, r2        ; mode 00 — register-to-register move (r1 = r2)
+add   r1, r2        ; r1 += r2 — register-to-register
 ```
 
-**Important:** the operand register is read through the AGU. For ALU ops the operand is a *memory operand*, so `add r1, r2` is `r1 += mem[r2]`, not `r1 += r2`. To compute `r1 += r2` register-to-register you need a stack roundtrip:
-
-```asm
-sub     sp, #4
-st      [sp], r2
-add     r1, [sp]
-add     sp, #4
-```
-
-`ld r1, r2` works as a register move because the load *uses* the AGU's immediate-mode output as the value to write.
+A bare register operand encodes as AGU mode 00, which outputs the *value* of that register as an immediate (not memory at that register). Every instruction that takes an AGU operand inherits this uniformly, so reg-reg ALU works the same way as `ld rD, rS` — no stack roundtrip needed. To add memory at `r2` instead, write it explicitly: `add r1, [r2]`.
 
 ### Immediate
 

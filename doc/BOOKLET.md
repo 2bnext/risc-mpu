@@ -215,7 +215,7 @@ Here's what defines it:
 - **8 registers**: r0 through sp. r0 is always zero. sp is the stack pointer.
 - **21 instructions**: NOP, LD, LDH, ST, ADD, SUB, six branches, AND, OR, XOR, SHL, SHR, ASR, CALL, RET, JMP.
 - **Unified instruction format**: every instruction is 32 bits with the same field layout.
-- **Address Generation Unit (AGU)**: one flexible system handles all operand addressing for nine different instructions.
+- **Address Generation Unit (AGU)**: one flexible system handles all operand addressing for twelve different instructions.
 - **Memory-mapped I/O**: the UART and LEDs appear as memory addresses. No special I/O instructions needed.
 - **UART bootloader**: programs are uploaded over a serial connection at 115,200 baud.
 - **Complete toolchain**: assembler, C compiler, simulator, and upload tool, all in Python.
@@ -369,7 +369,7 @@ Five bits of opcode give room for 32 instructions (19 are used). Three bits of r
 
 **Uniformity**: the decoder doesn't need to look at the opcode to know where the fields are. The opcode, register, size, and addressing mode are always in the same bit positions. This makes the hardware trivially simple: you wire bits [31:27] to the opcode decoder, bits [26:24] to the register file, and so on. No variable-length instruction complications, no mode-dependent field positions.
 
-**Orthogonality**: nine instructions (LD, ST, ADD, SUB, AND, OR, XOR, SHL, SHR) all route their payload through the same Address Generation Unit. The AGU doesn't know or care which instruction is asking. It just decodes the addressing mode and produces either an effective address or an immediate value. This means every ALU instruction can work with a register, an immediate, a memory indirect, or a post-increment load, all for free. The hardware cost of supporting `add r1, [r2][r3+=4]` is zero beyond what LD already needed.
+**Orthogonality**: twelve instructions (LD, ST, ADD, SUB, AND, OR, XOR, SHL, SHR, ASR, CALL, JMP) all route their payload through the same Address Generation Unit. The AGU doesn't know or care which instruction is asking. It just decodes the addressing mode and produces either an effective address or an immediate value. This means every ALU instruction can work with a register, an immediate, a memory indirect, or a post-increment load, all for free; CALL and JMP get the same freedom for their target. The hardware cost of supporting `add r1, [r2][r3+=4]` is zero beyond what LD already needed.
 
 **Composability**: the few instructions combine to express complex operations:
 
@@ -548,7 +548,7 @@ The first form is the `clr` pseudo-instruction, which expands to `ld r1, r0` and
 
 The AGU is the heart of the MPU's operand system. Understanding it is the key to writing efficient code.
 
-Nine instructions route their operand through the AGU: **LD, ST, ADD, SUB, AND, OR, XOR, SHL, SHR**. The AGU decodes the 20-bit payload and produces either an effective memory address or an immediate value. The instruction itself doesn't care which, it just uses whatever the AGU gives it.
+Twelve instructions route their operand through the AGU: **LD, ST, ADD, SUB, AND, OR, XOR, SHL, SHR, ASR, CALL, JMP**. The AGU decodes the 20-bit payload and produces either an effective memory address or an immediate value. The instruction itself doesn't care which, it just uses whatever the AGU gives it.
 
 ### Mode Summary
 
@@ -967,7 +967,7 @@ The point is that you can *understand it*. All of it. The Verilog is about 500 l
 
 The great processors of the 1970s had this quality. The 6502, the Z80, the 68000: they were machines that one person could master completely. The MPU carries that spirit forward. It's not a replica of those machines. It's a new design, built with modern tools (FPGAs, open-source synthesis, Python toolchains), but guided by the same principle: **simplicity is a feature, not a limitation.**
 
-The AGU is the design's signature idea. Instead of hard-coding addressing modes into individual instructions, a single unit handles operand decoding for all instructions uniformly. This gives nine instructions the full power of register-direct, immediate, absolute, indexed, indexed-with-offset, and post-increment addressing, at no additional hardware cost per instruction. The AGU is written once and wired to every instruction that needs an operand. That's the kind of decision that makes a design elegant rather than merely functional.
+The AGU is the design's signature idea. Instead of hard-coding addressing modes into individual instructions, a single unit handles operand decoding for all instructions uniformly. This gives twelve instructions the full power of register-direct, immediate, absolute, indexed, indexed-with-offset, and post-increment addressing, at no additional hardware cost per instruction. The AGU is written once and wired to every instruction that needs an operand. That's the kind of decision that makes a design elegant rather than merely functional.
 
 If you want to go further:
 

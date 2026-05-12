@@ -79,7 +79,7 @@ everywhere — write `ld r1, r2`, not `ld.32 r1, r2`.
 
 ## Addressing Modes (AGU)
 
-The Address Generation Unit decodes the payload for LD, ST, ADD, SUB, AND, OR, XOR, SHL, SHR.
+The Address Generation Unit decodes the payload for LD, ST, ADD, SUB, AND, OR, XOR, SHL, SHR, ASR, CALL, JMP.
 
 ### Immediate / Absolute (reg_value = 1)
 

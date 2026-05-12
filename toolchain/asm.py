@@ -358,11 +358,6 @@ def format_listing(addr, word, source_line):
             fields += f' cmp=#{cmp} target={tgt:#06x}'
         else:
             fields += f' cmp=r{cmp} target={tgt:#06x}'
-    elif op_name == 'CALL':
-        tgt = payload & 0xFFFF
-        fields += f' target={tgt:#06x}'
-    elif op_name in ('JMPR', 'CALLR'):
-        fields += f' (PC = r{rd})'
     elif op_name in ('RET', 'NOP'):
         pass
     elif rv:

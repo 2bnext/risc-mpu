@@ -5,14 +5,14 @@
 ## Usage
 
 ```sh
-python3 toolchain/basic.py program.bas        # writes program.s
-python3 toolchain/basic.py program.bas out.s
+python3 toolchain/basic.py program.bas        # writes program.mpu
+python3 toolchain/basic.py -S program.bas     # also keep program.s for inspection
 ```
 
-The Makefile in `testing/` recognises `.bas` files automatically:
+The Makefile in `testing/` recognises `.bas` files automatically (sources are organised under `testing/basic/`):
 
 ```sh
-make demo.mpu       # demo.bas -> demo.s -> demo.mpu
+make basic/primes.mpu
 ```
 
 ## Program structure
@@ -245,12 +245,12 @@ Programs share RAM with the heap and stack. There is no protection — a runaway
 
 ## Example
 
-A small demo exercising most features lives at `testing/demo.bas`. Build and run it with:
+A small demo exercising most features lives at `testing/basic/bastest.bas`. Build and run it with:
 
 ```sh
 cd testing
-make demo.mpu
-python3 ../toolchain/sim.py demo.mpu
+make basic/bastest.mpu
+python3 ../toolchain/sim.py basic/bastest.mpu
 ```
 
 A minimal example to start from:

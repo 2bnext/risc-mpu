@@ -5,17 +5,17 @@
 ## Usage
 
 ```sh
-python3 toolchain/cc.py program.c             # writes program.s
-python3 toolchain/cc.py program.c out.s       # explicit output path
+python3 toolchain/cc.py program.c             # writes program.mpu
+python3 toolchain/cc.py -S program.c          # also keep program.s for inspection
 ```
 
-In the `testing/` directory, the Makefile chains everything:
+In the `testing/` directory, the Makefile chains everything (C sources live under `testing/c/`):
 
 ```sh
-make program.mpu      # program.c -> program.s -> program.mpu
+make c/primes.mpu     # c/primes.c -> c/primes.mpu
 ```
 
-The standard library (`toolchain/stdlib.asm`) is automatically appended to the generated assembly, so all stdlib functions (`printf`, `puts`, `setleds`, …) are available without an `#include`. A reference header `testing/stdlib.h` lists all available functions.
+The standard library (`toolchain/stdlib.asm`) is automatically appended to the generated assembly, so all stdlib functions (`printf`, `puts`, `setleds`, …) are available without an `#include`. A reference header `testing/c/stdlib.h` lists all available functions.
 
 ## Preprocessor
 
@@ -344,7 +344,7 @@ The standard library (`toolchain/stdlib.asm`) is appended to every compiled prog
 
 The GPIO/I²C peripherals require external hardware: I²C needs 2.2 kΩ–10 kΩ pull-ups on SCL and SDA, and the GPIO pins are bare iCE40 pads. See [stdlib.md](stdlib.md) for per-function signatures, semantics, accuracy notes, the underlying MMIO protocols, and the ADC's external RC network.
 
-A complete I²C example lives at [`testing/bme280demo.c`](../../testing/bme280demo.c).
+A complete I²C example lives at [`testing/c/bme280test.c`](../../testing/c/bme280test.c).
 
 ## What is missing
 

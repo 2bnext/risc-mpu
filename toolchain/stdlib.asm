@@ -357,9 +357,7 @@ __mul:
                 ld      r4, r2                      ; test LSB of b
                 and     r4, #1
                 beq     r4, #0, .skip
-                push    r1                          ; acc += a (reg-reg via stack)
-                add     r3, [sp]
-                add     sp, #4
+                add     r3, r1                      ; acc += a
 .skip:
                 shl     r1, #1
                 shr     r2, #1
@@ -399,9 +397,7 @@ __divmod:
                 shl     r1, #1              ; dividend <<= 1
                 shl     r3, #1              ; quotient <<= 1
                 blt     r4, r2, .nosub      ; remainder < divisor?
-                push    r2                          ; reg-reg sub via stack
-                sub     r4, [sp]              ; r4 -= r2
-                add     sp, #4
+                sub     r4, r2                ; r4 -= r2
                 or      r3, #1              ; quotient |= 1
 .nosub:
                 sub     r5, #1
@@ -559,18 +555,14 @@ isqrt:
                 shl     r2, #2
                 ld      r4, r3
                 shr     r4, #30
-                push    r4
-                or      r2, [sp]
-                add     sp, #4
+                or      r2, r4
                 shl     r3, #2
                 shl     r1, #1
                 ld      r4, r1
                 shl     r4, #1
                 or      r4, #1
                 blt     r2, r4, .nosub
-                push    r4
-                sub     r2, [sp]
-                add     sp, #4
+                sub     r2, r4
                 or      r1, #1
 .nosub:         sub     r5, #1
                 jmp     .loop
@@ -602,9 +594,7 @@ _f_rad2deg:  db 0xE1, 0x2E, 0x65, 0x42  ; 57.2957795 = 180/pi
 fabs:
                 ld      r1, [sp+4]
                 ldi     r2, #0x7FFFFFFF
-                push    r2
-                and     r1, [sp]
-                add     sp, #4
+                and     r1, r2
                 ret
 
 ; ---- fneg(x): float negate ----
@@ -612,9 +602,7 @@ fabs:
 fneg:
                 ld      r1, [sp+4]
                 ldi     r2, #0x80000000
-                push    r2
-                xor     r1, [sp]
-                add     sp, #4
+                xor     r1, r2
                 ret
 
 ; ---- fsqrt(x): float square root ----
@@ -1224,9 +1212,7 @@ __funpack:
                 shr     r3, #9
                 beq     r2, #0, .zero
                 ldi     r4, #0x800000
-                push    r4
-                or      r3, [sp]
-                add     sp, #4
+                or      r3, r4
                 ret
 .zero:          clr     r3
                 ret
@@ -1242,17 +1228,11 @@ __fpack:
                 ld      r2, #254
                 ldi     r3, #0xFFFFFF
 .notover:       ldi     r4, #0x7FFFFF
-                push    r4
-                and     r3, [sp]
-                add     sp, #4
+                and     r3, r4
                 shl     r1, #31
                 shl     r2, #23
-                push    r2
-                or      r1, [sp]
-                add     sp, #4
-                push    r3
-                or      r1, [sp]
-                add     sp, #4
+                or      r1, r2
+                or      r1, r3
                 ret
 .retzero:       clr     r1
                 ret
@@ -1260,11 +1240,9 @@ __fpack:
 ; ---- __fnorm: normalise mantissa in r3, adjusting exponent in r2 ----
 __fnorm:
                 beq     r3, #0, .done
-.loop:          ldi     r4, #0x800000
-                push    r4
-                ld      r4, r3
-                and     r4, [sp]
-                add     sp, #4
+                ldi     r5, #0x800000       ; bit-23 mask (loop-invariant)
+.loop:          ld      r4, r3
+                and     r4, r5
                 bne     r4, #0, .done
                 shl     r3, #1
                 sub     r2, #1

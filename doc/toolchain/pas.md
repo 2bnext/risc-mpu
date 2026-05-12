@@ -9,10 +9,10 @@ python3 toolchain/pas.py program.pas          # writes program.mpu
 python3 toolchain/pas.py -S program.pas       # also keep program.s
 ```
 
-The Makefile in `testing/` recognises `.pas` files automatically:
+The Makefile in `testing/` recognises `.pas` files automatically (Pascal sources live under `testing/pascal/`):
 
 ```sh
-make hello.mpu        # hello.pas -> hello.mpu
+make pascal/hello.mpu     # pascal/hello.pas -> pascal/hello.mpu
 ```
 
 The standard library (`toolchain/stdlib.asm`) is appended to the generated assembly, so all stdlib functions (`printf`, `sleep`, `i2c_*`, …) are available without an `uses` clause.
@@ -197,7 +197,7 @@ writeln('chip id = ', id);
 
 ## Example
 
-A small demo at `testing/hello.pas`:
+A small demo at `testing/pascal/hello.pas`:
 
 ```pascal
 program hello;
@@ -219,8 +219,8 @@ Build and run on the simulator:
 
 ```sh
 cd testing
-make hello.mpu
-python3 ../toolchain/sim.py hello.mpu
+make pascal/hello.mpu
+python3 ../toolchain/sim.py pascal/hello.mpu
 ```
 
-A bigger example, [`testing/bme280demo.pas`](../../testing/bme280demo.pas), reads a BME280 sensor over I²C and prints compensated temperature, pressure, and humidity using the int32 reference compensation from the Bosch datasheet. It is a near line-for-line port of [`bme280demo.c`](../../testing/bme280demo.c) and produces identical output — a good demonstration of how much closer Pascal lets you get to C than BASIC does on this machine.
+A bigger example, [`testing/pascal/bme280test.pas`](../../testing/pascal/bme280test.pas), reads a BME280 sensor over I²C and prints compensated temperature, pressure, and humidity using the int32 reference compensation from the Bosch datasheet. It is a near line-for-line port of [`testing/c/bme280test.c`](../../testing/c/bme280test.c) and produces identical output — a good demonstration of how much closer Pascal lets you get to C than BASIC does on this machine.

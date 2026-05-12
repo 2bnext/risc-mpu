@@ -40,7 +40,11 @@ The project is at **v0.3**. A successor on the Alchitry Au (Artix-7) is planned 
 ```
 mpu/          Verilog: CPU, AGU, memory, UART, bootloader, top, I2C, ADC, PCF, build Makefile
 toolchain/    Python: asm.py, sim.py, cc.py, basic.py, pas.py, flash.py, stdlib.asm
-testing/      Sample programs (.asm hand-written, .c, .bas, .pas) and a Makefile chaining the toolchain
+testing/      Sample programs and a Makefile chaining the toolchain. Organised per-language:
+              asm/      hand-written assembly
+              c/        C programs (with shared .h headers: stdlib.h, ssd1306.h, bme280.h)
+              basic/    BASIC programs
+              pascal/   Pascal programs
 doc/          README/booklet-style docs:
               BOOKLET.md       — long-form beginner's guide
               ISA.md           — instruction set reference
@@ -81,7 +85,7 @@ These are off-chip parts the user must wire up for each peripheral to actually w
   - `C` ≈ 1–10 nF from `S` to GND.
   - `S` connects to `adc_in`.
   - `R1` and `R2` should be matched (1 % or better) for accuracy. The analog input must be bounded to 0–Vcc; clamp with diodes if not.
-- **BME280** (optional, used by [testing/bme280demo.c](../testing/bme280demo.c) and the BASIC/Pascal ports): standard 3.3 V breakout. Wire VCC/GND, SDA/SCL to the I²C pins (which already need pull-ups, see above), and tie SDO to GND so the device responds at 7-bit address `0x76`.
+- **BME280** (optional, used by [testing/c/bme280test.c](../testing/c/bme280test.c) and the BASIC/Pascal ports): standard 3.3 V breakout. Wire VCC/GND, SDA/SCL to the I²C pins (which already need pull-ups, see above), and tie SDO to GND so the device responds at 7-bit address `0x76`.
 
 ### Memory map used by BASIC and the heap
 
@@ -148,9 +152,9 @@ make clean       # removes *.mpu
 The current Makefile chains directly from source to `.mpu` — the compilers no longer write `.s` by default. There are four `%.mpu:` rules, one per source extension. Pick one source extension per program; don't mix.
 
 The full set of canonical demo programs is:
-- `hello.{asm,c,bas,pas}` — print "Hello!"
+- `hello.{asm,c,bas,pas}` — print "Hello!" (under `testing/asm/`, `testing/c/`, `testing/basic/`, `testing/pascal/`)
 - `primes.{c,bas,pas}` — primes up to 1000
-- `bme280demo.{c,bas,pas}` — read a BME280 over I²C and print compensated T/P/H
+- `bme280test.{c,bas,pas}` — read a BME280 over I²C and print compensated T/P/H
 
 Each language version of a given demo produces identical output, which makes them useful regression tests when touching compiler internals.
 
@@ -173,7 +177,7 @@ Each language version of a given demo produces identical output, which makes the
 
 - **`ld.8` / `ld.16` size-merge.** Never assume the upper bits of the destination are zero after a sub-word load. Either zero the destination first, or use the default 32-bit form. The BASIC compiler's `PEEK` does the zero-then-ld.8 dance for exactly this reason.
 - **Match compare width to load width.** `printf`'s format-specifier dispatch was broken before because it loaded a byte with `ld.8` and then compared with `beq ` against a 32-bit constant — the upper-bit garbage would intermittently hide matches. **The same rule applies to UART status reads**: all examples and the stdlib `__putc` use `ld.8 r4, 0xFFFF0004 ; bne.8 r4, #0, .wait`. If you write a new asm example that touches a sub-word MMIO register, use the matching `.8` size on both the load and the compare.
-- **No reg-reg ALU.** All ALU ops go through the AGU, so to compute `r1 = r1 - r2` you need a stack roundtrip: `sub sp,#4; st [sp],r2; sub r1,[sp]; add sp,#4`. The compilers do this; if you write asm by hand, expect to push.
+- **Reg-reg ALU works.** A bare register operand encodes as AGU mode 00, which outputs the register's *value* (not memory at it). So `add r1, r2` is `r1 += r2`, `sub r1, r2` is `r1 -= r2`, etc. — no stack roundtrip needed. To operate on memory at `r2` instead, write `add r1, [r2]` explicitly. All three compilers emit reg-reg ALU directly at binop sites; the docs and `stdlib.asm` were updated alongside this. Older notes that claimed reg-reg required a stack roundtrip are wrong.
 - **`mem_ready` must fire for every bus transaction.** Adding a new MMIO peripheral without driving `ready` deadlocks the CPU in the `S_MEM` state. The original UART/LED-IO handling had this bug.
 - **Byte stores into SPRAM.** Until recently, `mem.v` hardwired `MASKWREN=4'b1111`, so `st.8`/`st.16` clobbered the entire word. Fixed by computing per-nibble masks and shifting `wdata` into the right lane in `top.v`. Anything that touches SPRAM with sub-word stores depends on the fixed bitstream — C uses byte buffers, BASIC uses byte stores via `__strcpy`/`POKE`.
 - **20-bit immediates.** The `ld r, #imm` encoding holds a 20-bit signed value (range −524288..524287). Constants outside that range need `ld + ldh` (low 20 bits then high 20 bits, the fields overlap by 8 bits). Both `cc.py` and `basic.py` (and now `pas.py`) emit this automatically. If you ever see a literal in a `.bas` or `.pas` file silently get the wrong value, this is the first thing to check — the BME280 BASIC port hit this exact bug.
@@ -206,12 +210,13 @@ PCF pin notes worth remembering: `clk=35`, `uart_tx=4`, `uart_rx=6`, `led_g=41`,
 A quick regression sweep when touching compiler internals:
 ```sh
 cd testing
-for prog in hello primes bme280demo; do
-  for ext in c bas pas; do
-    if [ -f $prog.$ext ]; then
-      python3 ../toolchain/${ext/c/cc}*.py $prog.$ext >/dev/null && \
-      python3 ../toolchain/sim.py $prog.mpu --max-cycles=200000000 | tail -3
-    fi
+for prog in hello primes bme280test; do
+  for dir_ext in c/c basic/bas pascal/pas; do
+    dir=${dir_ext%/*}; ext=${dir_ext#*/}
+    src=$dir/$prog.$ext
+    [ -f $src ] || continue
+    python3 ../toolchain/${ext/c/cc}*.py $src >/dev/null && \
+      python3 ../toolchain/sim.py $dir/$prog.mpu --max-cycles=200000000 | tail -3
   done
 done
 ```

@@ -739,21 +739,17 @@ class Compiler:
             op = self.advance()[0]
             self.push_r1()                    # left
             self.gen_mul()                    # r1 = right
-            if op == '+':
-                self.emit('                add.32  r1, [sp]')
-            elif op == '-':
-                # right is in r1, left at [sp]; compute left - right.
-                self.push_r1()                # save right
-                self.emit('                ld.32   r1, [sp][r0+4]')
-                self.emit('                sub.32  r1, [sp]')
-                self.emit('                add.32  sp, #4')
-                self.temp_depth -= 1
-            elif op == 'OR':
-                self.emit('                or.32   r1, [sp]')
-            elif op == 'XOR':
-                self.emit('                xor.32  r1, [sp]')
-            self.emit('                add.32  sp, #4')
+            self.emit('                ld.32   r2, [r0][sp+=4]')  # pop left into r2
             self.temp_depth -= 1
+            if op == '+':
+                self.emit('                add.32  r1, r2')        # r1 = right + left
+            elif op == '-':
+                self.emit('                sub.32  r2, r1')        # r2 = left - right
+                self.emit('                ld.32   r1, r2')
+            elif op == 'OR':
+                self.emit('                or.32   r1, r2')
+            elif op == 'XOR':
+                self.emit('                xor.32  r1, r2')
 
     def gen_mul(self):
         self.gen_unary()
@@ -772,32 +768,26 @@ class Compiler:
                 self.emit('                add.32  sp, #8')
                 self.temp_depth -= 1          # balance the tracked push above
             elif op == 'AND':
-                self.emit('                and.32  r1, [sp]')
-                self.emit('                add.32  sp, #4')
+                self.emit('                ld.32   r2, [r0][sp+=4]')   # pop left
                 self.temp_depth -= 1
+                self.emit('                and.32  r1, r2')             # r1 = right & left
             elif op in ('SHL', 'SHR'):
-                # left << right or left >> right; right is in r1, left in [sp].
-                self.push_r1()
-                self.emit('                ld.32   r1, [sp][r0+4]')
+                # left << right or left >> right.
+                self.emit('                ld.32   r2, [r0][sp+=4]')   # pop left into r2
+                self.temp_depth -= 1
                 mnem = 'shl' if op == 'SHL' else 'shr'
-                self.emit(f'                {mnem}.32 r1, [sp]')
-                self.emit('                add.32  sp, #8')
-                self.temp_depth -= 2
-                # Re-balance: we popped left manually above (sp-=8 not -4).
-                # The outer balancing will not run for this branch; account
-                # for the original `push_r1()` of left.
-                continue
+                self.emit(f'                {mnem}.32 r2, r1')          # r2 = left shifted by right
+                self.emit('                ld.32   r1, r2')
 
     def gen_unary(self):
         k = self.peek()[0]
         if k == '-':
             self.advance()
             self.gen_unary()
-            self.push_r1()
+            # r1 = x; compute -x as 0 - x using reg-reg AGU mode 00.
+            self.emit('                ld.32   r2, r1')
             self.emit('                ld.32   r1, #0')
-            self.emit('                sub.32  r1, [sp]')
-            self.emit('                add.32  sp, #4')
-            self.temp_depth -= 1
+            self.emit('                sub.32  r1, r2')
             return
         if k == '+':
             self.advance()

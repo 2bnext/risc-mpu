@@ -135,7 +135,7 @@ Most off-the-shelf I²C breakouts (BME280, BMP280, MPU-6050, SSD1306, …) alrea
   - Write bits: `[0]=start`, `[1]=stop`, `[2]=write`, `[3]=read`, `[4]=ack_send`. Set exactly one of bits 0–3 per command; bit 4 is the ACK polarity for a read.
   - Read bits: `[0]=busy`, `[1]=ack_recv`. The CPU should poll until `busy` is clear before issuing the next command (the stdlib helpers do this for you).
 
-**Software helpers:** `i2c_start`, `i2c_stop`, `i2c_write`, `i2c_read` in [stdlib.md](toolchain/stdlib.md). A complete worked example reading a BME280 is at [`testing/bme280demo.c`](../testing/bme280demo.c) (with line-for-line ports in [`bme280demo.bas`](../testing/bme280demo.bas) and [`bme280demo.pas`](../testing/bme280demo.pas)).
+**Software helpers:** `i2c_start`, `i2c_stop`, `i2c_write`, `i2c_read` in [stdlib.md](toolchain/stdlib.md). A complete worked example reading a BME280 is at [`testing/c/bme280test.c`](../testing/c/bme280test.c) (with line-for-line ports in [`testing/basic/bme280test.bas`](../testing/basic/bme280test.bas) and [`testing/pascal/bme280test.pas`](../testing/pascal/bme280test.pas)).
 
 ```c
 i2c_start();

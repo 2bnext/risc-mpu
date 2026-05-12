@@ -437,10 +437,7 @@ class Compiler:
         var = self.use_int_var(name)
         self.emit(f'                ld.32   r1, {var}')
         self.emit(f'                ld.32   r2, _FS_{loop_id}')
-        self.emit(f'                sub.32  sp, #4')
-        self.emit(f'                st.32   [sp], r2')
-        self.emit(f'                add.32  r1, [sp]')
-        self.emit(f'                add.32  sp, #4')
+        self.emit(f'                add.32  r1, r2')
         self.emit(f'                st.32   {var}, r1')
         self.emit(f'                ld.32   r2, _FL_{loop_id}')
         self.emit(f'                ble.32  r1, r2, _FORBODY_{loop_id}')
@@ -473,8 +470,8 @@ class Compiler:
             self.push_r1()
             if self.gen_and() != 'int':
                 self.syntax("OR requires int")
-            self.emit(f'                or.32   r1, [sp]')
-            self.emit(f'                add.32  sp, #4')
+            self.emit(f'                ld.32   r2, [r0][sp+=4]')
+            self.emit(f'                or.32   r1, r2')
         return t
 
     def gen_and(self):
@@ -486,8 +483,8 @@ class Compiler:
             self.push_r1()
             if self.gen_rel() != 'int':
                 self.syntax("AND requires int")
-            self.emit(f'                and.32  r1, [sp]')
-            self.emit(f'                add.32  sp, #4')
+            self.emit(f'                ld.32   r2, [r0][sp+=4]')
+            self.emit(f'                and.32  r1, r2')
         return t
 
     def gen_rel(self):
@@ -541,11 +538,10 @@ class Compiler:
             self.push_r1()                          # save left
             if self.gen_add() != 'int':
                 self.syntax("shift requires int")
-            self.push_r1()                          # save right
-            self.emit(f'                ld.32   r1, [sp][r0+4]')   # left
+            self.emit(f'                ld.32   r2, [r0][sp+=4]')   # pop left into r2
             mnem = 'shl' if op == '<<' else 'shr'
-            self.emit(f'                {mnem}.32 r1, [sp]')
-            self.emit(f'                add.32  sp, #8')
+            self.emit(f'                {mnem}.32 r2, r1')           # r2 = left shifted by right
+            self.emit(f'                ld.32   r1, r2')
         return t
 
     def gen_add(self):
@@ -570,14 +566,12 @@ class Compiler:
                 self.push_r1()
                 if self.gen_mul() != 'int':
                     self.syntax("type mismatch in arithmetic")
+                self.emit(f'                ld.32   r2, [r0][sp+=4]')   # pop left into r2
                 if op == '+':
-                    self.emit(f'                add.32  r1, [sp]')
-                    self.emit(f'                add.32  sp, #4')
+                    self.emit(f'                add.32  r1, r2')         # r1 = right + left
                 else:
-                    self.push_r1()
-                    self.emit(f'                ld.32   r1, [sp][r0+4]')
-                    self.emit(f'                sub.32  r1, [sp]')
-                    self.emit(f'                add.32  sp, #8')
+                    self.emit(f'                sub.32  r2, r1')         # r2 = left - right
+                    self.emit(f'                ld.32   r1, r2')
         return t
 
     def gen_mul(self):
@@ -605,10 +599,10 @@ class Compiler:
             self.advance()
             if self.gen_unary() != 'int':
                 self.syntax("unary - requires int")
-            self.push_r1()
+            # r1 = x; compute -x as 0 - x using reg-reg AGU mode 00.
+            self.emit(f'                ld.32   r2, r1')
             self.emit(f'                ld.32   r1, #0')
-            self.emit(f'                sub.32  r1, [sp]')
-            self.emit(f'                add.32  sp, #4')
+            self.emit(f'                sub.32  r1, r2')
             return 'int'
         if self.peek()[0] in ('~', 'NOT'):
             self.advance()
