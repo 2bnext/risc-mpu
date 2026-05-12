@@ -18,12 +18,17 @@ Flash format at offset 0x100000:
     4 bytes  length (little-endian uint32, <= 64 KiB)
     N bytes  program
 """
+<<<<<<< HEAD
 import glob, serial, struct, sys, time, os, subprocess
+=======
+import serial, struct, sys, time, os, subprocess
+>>>>>>> d40fe4577739e06d138641b2bbc8439e1f16fd52
 
 MAGIC = b'MPU1'
 FLASH_OFFSET = 0x100000
 
 
+<<<<<<< HEAD
 def find_port():
     # The iCESugar's UART is interface 1 of its DAPLink CMSIS-DAP composite
     # device. Resolve by USB ID so it works regardless of which /dev/ttyACMn
@@ -74,6 +79,45 @@ def do_persist(mpu_file):
     print("done. Power-cycle or press S2 to run.")
 
 
+=======
+def flag(flags, name):
+    return name in flags
+
+
+def flag_value(flags, prefix, default=None, cast=int):
+    for f in flags:
+        if f.startswith(prefix):
+            return cast(f.split('=', 1)[1])
+    return default
+
+
+def run_icesprog(path):
+    cmd = ['icesprog', '-o', f'0x{FLASH_OFFSET:x}', path]
+    print('running:', ' '.join(cmd))
+    r = subprocess.run(cmd)
+    if r.returncode != 0:
+        sys.exit(r.returncode)
+
+
+def do_persist(mpu_file):
+    with open(mpu_file, 'rb') as f:
+        prog = f.read()
+    if len(prog) > 0x10000:
+        print(f"error: program too large ({len(prog)} bytes, max 64 KiB)",
+              file=sys.stderr)
+        sys.exit(1)
+    image = MAGIC + struct.pack('<I', len(prog)) + prog
+    # Write the image next to the .mpu file so it can be inspected.
+    img_path = mpu_file.rsplit('.', 1)[0] + '.img'
+    with open(img_path, 'wb') as f:
+        f.write(image)
+    print(f"persisting {mpu_file} ({len(prog)} bytes program, "
+          f"{len(image)} bytes image -> {img_path}) at flash offset 0x{FLASH_OFFSET:x}")
+    run_icesprog(img_path)
+    print("done. Power-cycle or press S2 to run.")
+
+
+>>>>>>> d40fe4577739e06d138641b2bbc8439e1f16fd52
 def do_erase():
     # Any non-magic bytes disable the flash path.
     erase_path = '/tmp/mpu_erase.bin'
@@ -148,7 +192,11 @@ def main():
         do_persist(mpu_file)
         return
 
+<<<<<<< HEAD
     port = args[1] if len(args) > 1 else find_port()
+=======
+    port = args[1] if len(args) > 1 else "/dev/ttyACM1"
+>>>>>>> d40fe4577739e06d138641b2bbc8439e1f16fd52
     chunk_size = flag_value(flags, '--chunk=', default=8)
     delay_ms = flag_value(flags, '--delay=', default=1)
     skip_prompt = flag(flags, '--now')

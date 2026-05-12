@@ -13,7 +13,12 @@ module top (
     inout  wire       i2c_scl,
     inout  wire       i2c_sda,
     input  wire       adc_in,
-    output wire       adc_out
+    output wire       adc_out,
+    // SPI flash (shared with FPGA configuration bus)
+    output wire       flash_sck,
+    output wire       flash_ss,
+    output wire       flash_si,
+    input  wire       flash_so
 );
 
     // ---- Power-on reset + S2 button reset ----
@@ -47,21 +52,81 @@ module top (
         .valid (rx_valid)
     );
 
+    // ---- SPI flash reader (shared with FPGA config pins) ----
+    wire        flash_start;
+    wire [23:0] flash_addr;
+    wire [23:0] flash_count;
+    wire        flash_busy;
+    wire        flash_done;
+    wire [7:0]  flash_dout;
+    wire        flash_dv;
+    wire        flash_sck_int;
+    wire        flash_ss_int;
+    wire        flash_si_int;
+    wire        flash_so_int;
+
+    spi_flash u_flash (
+        .clk        (clk),
+        .rst_n      (rst_n),
+        .start      (flash_start),
+        .addr       (flash_addr),
+        .count      (flash_count),
+        .busy       (flash_busy),
+        .done       (flash_done),
+        .data       (flash_dout),
+        .data_valid (flash_dv),
+        .sck        (flash_sck_int),
+        .cs_n       (flash_ss_int),
+        .mosi       (flash_si_int),
+        .miso       (flash_so_int)
+    );
+
+    // Explicit SB_IO for the dedicated SPI config pins so they drive
+    // cleanly after FPGA configuration (default inference can leave them
+    // tri-stated). PIN_TYPE 6'b1010_01 = simple output + simple input.
+    SB_IO #(.PIN_TYPE(6'b1010_01), .PULLUP(1'b0)) u_io_sck (
+        .PACKAGE_PIN(flash_sck), .OUTPUT_ENABLE(1'b1),
+        .D_OUT_0(flash_sck_int), .D_IN_0()
+    );
+    SB_IO #(.PIN_TYPE(6'b1010_01), .PULLUP(1'b0)) u_io_ss (
+        .PACKAGE_PIN(flash_ss),  .OUTPUT_ENABLE(1'b1),
+        .D_OUT_0(flash_ss_int),  .D_IN_0()
+    );
+    SB_IO #(.PIN_TYPE(6'b1010_01), .PULLUP(1'b0)) u_io_si (
+        .PACKAGE_PIN(flash_si),  .OUTPUT_ENABLE(1'b1),
+        .D_OUT_0(flash_si_int),  .D_IN_0()
+    );
+    SB_IO #(.PIN_TYPE(6'b0000_01), .PULLUP(1'b1)) u_io_so (
+        .PACKAGE_PIN(flash_so),  .OUTPUT_ENABLE(1'b0),
+        .D_OUT_0(1'b0),          .D_IN_0(flash_so_int)
+    );
+
     // ---- Bootloader ----
     wire        boot_wr;
     wire [31:0] boot_addr;
     wire [31:0] boot_wdata;
     wire        mpu_rst_n;
+    wire        boot_in_flash;
+    wire [7:0]  boot_diag;
 
     bootloader u_boot (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .rx_data   (rx_data),
-        .rx_valid  (rx_valid),
-        .wr        (boot_wr),
-        .addr      (boot_addr),
-        .wdata     (boot_wdata),
-        .mpu_rst_n (mpu_rst_n)
+        .clk              (clk),
+        .rst_n            (rst_n),
+        .rx_data          (rx_data),
+        .rx_valid         (rx_valid),
+        .wr               (boot_wr),
+        .addr             (boot_addr),
+        .wdata            (boot_wdata),
+        .flash_start      (flash_start),
+        .flash_addr       (flash_addr),
+        .flash_count      (flash_count),
+        .flash_busy       (flash_busy),
+        .flash_done       (flash_done),
+        .flash_data       (flash_dout),
+        .flash_data_valid (flash_dv),
+        .mpu_rst_n        (mpu_rst_n),
+        .in_flash         (boot_in_flash),
+        .diag_byte        (boot_diag)
     );
 
     // ---- MPU ----
@@ -248,7 +313,13 @@ module top (
     always @(posedge clk) begin
         mpu_rst_n_d <= mpu_rst_n;
         if (!mpu_rst_n)
-            led_reg <= 3'b010;  // red while loading
+            // While loading:
+            //   - in flash states: red + blue (magenta)
+            //   - otherwise (UART waiting): low 3 bits of first flash byte
+            //     read. 000=read all zeros, 111=read all 0xFF, else a partial
+            //     read. Magic byte 'M' (0x4D) would show as 3'b101 (G+B=cyan)
+            //     but that wouldn't fall through here in the first place.
+            led_reg <= boot_in_flash ? 3'b110 : boot_diag[2:0];
         else if (!mpu_rst_n_d)
             led_reg <= 3'b000;  // all off once program starts
         else if (led_wr)

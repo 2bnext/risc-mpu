@@ -1,0 +1,60 @@
+10 REM ----- MPU BASIC DEMO -----
+20 PRINT "ICESUGAR MPU BASIC"
+30 PRINT "=================="
+40 PRINT
+50 REM ----- arithmetic -----
+60 PRINT "SQUARES AND CUBES:"
+70 FOR I = 1 TO 6
+80 PRINT "  "; I; "^2="; I * I; "  "; I; "^3="; I * I * I
+90 NEXT I
+100 PRINT
+110 REM ----- factorial via GOSUB -----
+120 PRINT "FACTORIALS:"
+130 FOR I = 1 TO 8
+140 LET N = I
+150 GOSUB 1000
+160 PRINT "  "; I; "! = "; F
+170 NEXT I
+180 PRINT
+190 REM ----- primes up to 50 -----
+200 PRINT "PRIMES UP TO 50:"
+210 FOR I = 2 TO 50
+220 LET P = 1
+230 FOR J = 2 TO I - 1
+240 IF I - J * (I / J) = 0 THEN LET P = 0
+250 NEXT J
+260 IF P = 1 THEN PRINT "  "; I
+270 NEXT I
+280 PRINT
+290 REM ----- string fun -----
+300 LET A$ = "HELLO"
+310 LET B$ = ", WORLD!"
+320 LET C$ = A$ + B$
+330 PRINT "STRING: "; C$
+340 IF A$ = "HELLO" THEN PRINT "  GREETING MATCHED"
+350 IF C$ <> A$ THEN PRINT "  CONCAT IS LONGER"
+360 PRINT
+370 REM ----- heap: build a string with POKE -----
+380 PRINT "HEAP BUFFER:"
+390 LET P = MALLOC(16)
+400 POKE P + 0, 77
+410 POKE P + 1, 80
+420 POKE P + 2, 85
+430 POKE P + 3, 33
+440 POKE P + 4, 0
+450 PRINT "  BYTES:";
+460 FOR I = 0 TO 3
+470 PRINT " "; PEEK(P + I);
+480 NEXT I
+490 PRINT
+500 PRINT
+510 PRINT "DONE."
+520 END
+530 REM
+1000 REM ----- subroutine: factorial of N -> F -----
+1010 LET F = 1
+1020 LET K = N
+1030 IF K <= 1 THEN RETURN
+1040 LET F = F * K
+1050 LET K = K - 1
+1060 GOTO 1030
